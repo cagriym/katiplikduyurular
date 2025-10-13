@@ -4,15 +4,14 @@ import { cn } from '@/lib/utils'; // cn fonksiyonunun varlığını varsayıyoru
 // Hata giderildi: Geçici yerel 'cn' tanımı kaldırıldı.
 // const cn = (...classes: any[]) => classes.filter(Boolean).join(' ');
 
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  // Ek stil varyantları veya boyutlar burada tanımlanabilir
-}
+// ESLint uyarısını/hatasını gidermek için ButtonProps interface'i kaldırıldı.
+// Doğrudan React.ButtonHTMLAttributes<HTMLButtonElement> tipi kullanıldı.
 
 /**
  * Button bileşeni.
  * Adlandırılmış dışa aktarma (Named Export) olarak tanımlanmıştır.
  */
-export const Button: React.FC<ButtonProps> = ({ className, children, ...props }) => {
+export const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement>> = ({ className, children, ...props }) => {
   return (
     <button
       className={cn(
