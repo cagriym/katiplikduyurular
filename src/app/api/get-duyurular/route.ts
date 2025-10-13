@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
-import axios from "axios";
-import * as cheerio from "cheerio";
+import { Redis } from "@upstash/redis";
 
-// Ankara Adliyesi arşiv sayfası (tüm duyurular burada)
-const DUYURULAR_URL = "https://ankara.adalet.gov.tr/Arsiv/tumu";
-
+// Duyuru tipi tanımı (Arayüz)
 interface Duyuru {
   title: string;
   link: string;
@@ -12,181 +9,55 @@ interface Duyuru {
   id: string;
 }
 
-/**
- * Ankara Adliyesi ana sayfasından duyuruları çek
- */
-async function fetchDuyurular(): Promise<Duyuru[]> {
-  try {
-    console.log("Duyurular çekiliyor...");
-    const response = await axios.get(DUYURULAR_URL, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "tr-TR,tr;q=0.8,en-US;q=0.5,en;q=0.3",
-        "Accept-Encoding": "gzip, deflate, br",
-        Connection: "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-      },
-      timeout: 15000,
-      maxRedirects: 5,
-      validateStatus: function (status) {
-        return status >= 200 && status < 300;
-      },
+// Redis bağlantısını kur
+let redis: Redis | null = null;
+try {
+  if (
+    process.env.UPSTASH_REDIS_REST_URL &&
+    process.env.UPSTASH_REDIS_REST_TOKEN
+  ) {
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
     });
-
-    const $ = cheerio.load(response.data);
-    const duyurular: Duyuru[] = [];
-
-    // Duyuru listesini parse et - arşiv sayfasındaki duyurular bölümü
-    // Önce tüm linkleri kontrol et
-    $("a").each((index, element) => {
-      const $element = $(element);
-      const title = $element.text().trim();
-      const link = $element.attr("href") || "";
-
-      // Arşiv sayfasındaki duyuru linklerini filtrele
-      if (
-        title &&
-        title.length > 10 &&
-        !title.includes("BASIN DUYURULARI") &&
-        !title.includes("TÜMÜ") &&
-        !title.includes("Ana Sayfa") &&
-        !title.includes("İletişim") &&
-        link &&
-        (link.includes("duyuru") ||
-          link.includes("ilan") ||
-          link.includes("basin"))
-      ) {
-        const fullLink = link.startsWith("http")
-          ? link
-          : `https://ankara.adalet.gov.tr${
-              link.startsWith("/") ? link : "/" + link
-            }`;
-
-        const id = Buffer.from(title + link)
-          .toString("base64")
-          .substring(0, 16);
-
-        duyurular.push({
-          title,
-          link: fullLink,
-          date: new Date().toLocaleDateString("tr-TR"), // Tarih bulunamadığı için şimdiki tarih
-          id,
-        });
-
-        console.log(`Duyuru bulundu: "${title}"`);
-      }
-    });
-
-    // Eğer yukarıdaki yöntemle duyuru bulunamazsa, diğer selector'ları dene
-    if (duyurular.length === 0) {
-      $(
-        ".duyuru-item, .news-item, .announcement-item, .list-item, .duyuru, .announcement, .haber, .archive-item, .arsiv-item, tr, .row, div"
-      ).each((index, element) => {
-        const $element = $(element);
-
-        // Başlık ve link bilgilerini al
-        const titleElement = $element
-          .find(
-            "a, .title, .baslik, h3, h4, .duyuru-baslik, .announcement-title"
-          )
-          .first();
-        const title = titleElement.text().trim();
-        const link = titleElement.attr("href") || "";
-
-        // Tarih bilgisini al
-        const dateElement = $element
-          .find(
-            ".date, .tarih, .published-date, time, .duyuru-tarih, .announcement-date"
-          )
-          .first();
-        const date = dateElement.text().trim();
-
-        if (
-          title &&
-          title.length > 5 &&
-          !title.includes("BASIN DUYURULARI") &&
-          !title.includes("Tarih") &&
-          !title.includes("Başlık")
-        ) {
-          const fullLink = link.startsWith("http")
-            ? link
-            : `https://ankara.adalet.gov.tr${
-                link.startsWith("/") ? link : "/" + link
-              }`;
-
-          const id = Buffer.from(title + date)
-            .toString("base64")
-            .substring(0, 16);
-
-          duyurular.push({
-            title,
-            link: fullLink,
-            date,
-            id,
-          });
-        }
-      });
-    }
-
-    // Eğer özel selector bulunamazsa, genel linkleri kontrol et
-    if (duyurular.length === 0) {
-      $('a[href*="duyuru"], a[href*="announcement"]').each((index, element) => {
-        const $element = $(element);
-        const title = $element.text().trim();
-        const link = $element.attr("href") || "";
-
-        if (title && title.length > 5) {
-          const fullLink = link.startsWith("http")
-            ? link
-            : `https://ankara.adalet.gov.tr${
-                link.startsWith("/") ? link : "/" + link
-              }`;
-
-          const id = Buffer.from(title).toString("base64").substring(0, 16);
-
-          duyurular.push({
-            title,
-            link: fullLink,
-            date: new Date().toLocaleDateString("tr-TR"),
-            id,
-          });
-        }
-      });
-    }
-
-    console.log(`${duyurular.length} duyuru bulundu`);
-    return duyurular;
-  } catch (error) {
-    console.error("Duyurular çekilirken hata:", error);
-    return [];
+  } else {
+    console.warn("Redis bağlantı bilgileri eksik. Veri çekilemiyor.");
   }
+} catch (error) {
+  console.error("Redis bağlantı hatası:", error);
 }
 
 /**
- * GET endpoint - Duyuruları döndür
+ * GET endpoint - Ön yüz (Frontend) için duyuruları Redis'ten çeker.
  */
 export async function GET() {
   try {
-    const duyurular = await fetchDuyurular();
+    if (!redis) {
+      console.error("Redis objesi null. Bağlantı kurulamadı.");
+      // Redis bağlantısı yoksa boş liste dön
+      return NextResponse.json({ duyurular: [] }, { status: 200 });
+    }
 
-    return NextResponse.json({
-      success: true,
-      duyurular,
-      count: duyurular.length,
-      timestamp: new Date().toISOString(),
-    });
+    // Redis'ten tüm duyuruları çek
+    const storedDuyurular = await redis.get("all_duyurular");
+
+    let duyurular: Duyuru[] = [];
+    if (storedDuyurular) {
+      duyurular = storedDuyurular as Duyuru[];
+    } else {
+      console.warn("Redis'te 'all_duyurular' anahtarı bulunamadı (Henüz cron çalışmamış olabilir).");
+    }
+
+    // Duyuruları ön yüze JSON formatında döndür
+    return NextResponse.json({ duyurular }, { status: 200 });
+    
   } catch (error) {
-    console.error("API hatası:", error);
+    console.error("Duyuru çekme sırasında API hatası:", error);
+    // Hata durumunda bile boş liste döndürerek uygulamanın çökmesini engelle
     return NextResponse.json(
-      {
-        success: false,
-        error: "Duyurular çekilirken hata oluştu",
-        details: error instanceof Error ? error.message : "Bilinmeyen hata",
-        duyurular: [],
-        count: 0,
+      { 
+        duyurular: [], 
+        error: "Veriler çekilirken hata oluştu" 
       },
       { status: 500 }
     );
