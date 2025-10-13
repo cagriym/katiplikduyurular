@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Button from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
+import { formatDateTime } from "@/lib/utils"; // utils'tan tarih formatlama fonksiyonu
+import Link from "next/link"; // Next.js Link bileşeni
 
 interface Duyuru {
   title: string;
@@ -12,14 +14,41 @@ interface Duyuru {
 }
 
 export default function Home() {
-  const [isLoading, setIsLoading] = useState(false);
+  // Yükleme durumu başlangıçta true olmalı (ilk yükleme için)
+  const [isLoading, setIsLoading] = useState(true); 
   const [result, setResult] = useState<string>("");
   const [duyurular, setDuyurular] = useState<Duyuru[]>([]);
-  const [lastCheck, setLastCheck] = useState<string>("");
+  const [lastCheck, setLastCheck] = useState<string>(new Date().toLocaleString("tr-TR"));
 
+  // Sadece duyuruları çekme fonksiyonu
+  const fetchDuyurular = async () => {
+    setIsLoading(true); // Yükleme durumunu başlat
+    try {
+      const response = await fetch("/api/get-duyurular");
+
+      if (!response.ok) {
+        // API'den 500 gibi bir hata gelirse
+        throw new Error(`Veri çekilemedi: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setDuyurular(data.duyurular || []);
+    } catch (error) {
+      console.error("Duyuruları çekerken hata:", error);
+      setDuyurular([]); // Hata durumunda boş liste göster
+      setResult(
+        `Kritik Hata: Duyurular yüklenemedi. Redis bağlantısını kontrol edin. (${error instanceof Error ? error.message : "Bilinmeyen hata"})`
+      );
+    } finally {
+      setIsLoading(false); // Her durumda yükleme durumunu kapat! (CRITICAL FIX)
+    }
+  };
+
+
+  // Manuel kontrol ve test butonu fonksiyonu
   const testDuyuruCheck = async () => {
     setIsLoading(true);
-    setResult("");
+    setResult("Kontrol başlatıldı, Telegram'a rapor bekleniyor...");
 
     try {
       const response = await fetch("/api/check-duyurular", {
@@ -31,237 +60,107 @@ export default function Home() {
       });
 
       const data = await response.json();
-      setResult(JSON.stringify(data, null, 2));
+      
+      if (!response.ok) {
+        throw new Error(`API Hatası: ${data.error || response.statusText}`);
+      }
+      
+      setResult(`Başarılı: ${data.message}`);
       setLastCheck(new Date().toLocaleString("tr-TR"));
 
-      // Duyuruları da çek
-      await fetchDuyurular();
+      // Kontrol bittikten sonra duyuruları güncelle
+      await fetchDuyurular(); 
+
     } catch (error) {
       setResult(
         `Hata: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`
       );
     } finally {
-      setIsLoading(false);
+      setIsLoading(false); // Her durumda yükleme durumunu kapat! (CRITICAL FIX)
     }
   };
 
-  const fetchDuyurular = async () => {
-    try {
-      const response = await fetch("/api/get-duyurular");
-      if (response.ok) {
-        const data = await response.json();
-        setDuyurular(data.duyurular || []);
-      }
-    } catch (error) {
-      console.error("Duyurular çekilemedi:", error);
-    }
-  };
-
-  // Sayfa yüklendiğinde duyuruları çek
-  React.useEffect(() => {
+  // Sayfa yüklendiğinde otomatik olarak duyuruları çek
+  useEffect(() => {
     fetchDuyurular();
-  }, []);
+  }, []); // Sadece bir kez çalışır
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            Ankara Adliyesi Duyuru Takip Sistemi
-          </h1>
-          <p className="text-lg text-gray-600">
-            Ankara Adliyesi sitesindeki duyuruları takip eder ve Telegram
-            üzerinden bildirim gönderir.
-          </p>
+    <div className="min-h-screen bg-gray-50 p-4">
+      <div className="max-w-4xl mx-auto space-y-8">
+        <h1 className="text-3xl font-bold text-gray-900 text-center">
+          Ankara Adliyesi Duyuru Takip Sistemi
+        </h1>
+
+        {/* Kontrol ve Yenileme Butonları */}
+        <div className="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4">
+          <Button 
+            onClick={testDuyuruCheck} 
+            disabled={isLoading}
+            className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            {isLoading ? "Kontrol Ediliyor..." : "Duyuruları Yenile ve Test Et (POST)"}
+          </Button>
+          <Button 
+            onClick={fetchDuyurular} 
+            disabled={isLoading}
+            className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
+          >
+            {isLoading ? "Yükleniyor..." : "Sadece Görüntüle (GET)"}
+          </Button>
         </div>
 
-        <div className="grid gap-8 md:grid-cols-2">
-          {/* Sistem Bilgileri */}
-          <Card>
-            <CardHeader>
-              <h2 className="text-xl font-semibold">Sistem Bilgileri</h2>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <h3 className="font-medium text-gray-900">Özellikler:</h3>
-                <ul className="mt-2 space-y-1 text-sm text-gray-600">
-                  <li>• Günde iki kez (09:00 ve 18:00) otomatik kontrol</li>
-                  <li>• Telegram bildirimleri</li>
-                  <li>• Upstash Redis ile veri saklama</li>
-                  <li>• Vercel Serverless fonksiyonları</li>
-                </ul>
-              </div>
-
-              <div>
-                <h3 className="font-medium text-gray-900">Hedef Site:</h3>
-                <a
-                  href="https://ankara.adalet.gov.tr/duyurular"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-800 underline"
-                >
-                  ankara.adalet.gov.tr/duyurular
-                </a>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Test Paneli */}
-          <Card>
-            <CardHeader>
-              <h2 className="text-xl font-semibold">Test Paneli</h2>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button
-                onClick={testDuyuruCheck}
-                isLoading={isLoading}
-                className="w-full"
-              >
-                {isLoading ? "Kontrol Ediliyor..." : "Duyuru Kontrolü Test Et"}
-              </Button>
-
-              {result && (
-                <div className="mt-4">
-                  <h3 className="font-medium text-gray-900 mb-2">Sonuç:</h3>
-                  <pre className="bg-gray-100 p-3 rounded-md text-xs overflow-auto max-h-40">
-                    {result}
-                  </pre>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Duyurular Listesi */}
-        <Card className="mt-8">
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">Son Duyurular</h2>
-              {lastCheck && (
-                <span className="text-sm text-gray-500">
-                  Son kontrol: {lastCheck}
-                </span>
-              )}
-            </div>
+        {/* Durum Kartı */}
+        <Card className="shadow-lg">
+          <CardHeader className="text-xl font-semibold border-b pb-3">
+            Sistem Durumu
           </CardHeader>
-          <CardContent>
-            {duyurular.length > 0 ? (
-              <div className="space-y-4">
-                {duyurular.slice(0, 10).map((duyuru, _index) => (
-                  <div // Düzeltildi: 'index' -> '_index'
-                    key={duyuru.id}
-                    className="border-l-4 border-blue-500 pl-4 py-2 hover:bg-gray-50 rounded-r-md transition-colors"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <h3 className="font-medium text-gray-900 mb-1 line-clamp-2">
-                          {duyuru.title}
-                        </h3>
-                        {duyuru.date && (
-                          <p className="text-sm text-gray-500 mb-2">
-                            📅 {duyuru.date}
-                          </p>
-                        )}
-                      </div>
-                      {duyuru.link && (
-                        <a
-                          href={duyuru.link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="ml-4 text-blue-600 hover:text-blue-800 text-sm font-medium"
-                        >
-                          Görüntüle →
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {duyurular.length > 10 && (
-                  <p className="text-sm text-gray-500 text-center mt-4">
-                    Ve {duyurular.length - 10} duyuru daha...
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <p className="text-gray-500 mb-4">
-                  Henüz duyuru çekilmedi. Test butonuna tıklayarak duyuruları
-                  çekebilirsiniz.
-                </p>
-                <Button onClick={fetchDuyurular} variant="outline">
-                  Duyuruları Yenile
-                </Button>
-              </div>
-            )}
+          <CardContent className="pt-4 space-y-2">
+            <p className="text-sm text-gray-700">
+              <span className="font-medium">Son Kontrol:</span>{" "}
+              {lastCheck} (UTC: {new Date(lastCheck).toISOString()})
+            </p>
+            <p className="text-sm text-gray-700">
+              <span className="font-medium">Durum Mesajı:</span>{" "}
+              <code className="bg-gray-200 p-1 rounded text-xs break-all">{result || "Beklemede"}</code>
+            </p>
           </CardContent>
         </Card>
 
-        {/* Kurulum Talimatları */}
-        <Card className="mt-8">
-          <CardHeader>
-            <h2 className="text-xl font-semibold">Kurulum Talimatları</h2>
+        {/* Duyuru Listesi */}
+        <Card className="shadow-lg">
+          <CardHeader className="text-xl font-semibold border-b pb-3">
+            Bulunan Duyurular ({duyurular.length})
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <h3 className="font-medium text-gray-900 mb-2">
-                1. Telegram Bot Oluşturma:
-              </h3>
-              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
-                <li>@BotFather&apos;a mesaj gönderin</li>
-                <li>/newbot komutunu kullanın</li>
-                <li>Bot token&apos;ınızı kaydedin</li>
-                <li>Bot&apos;unuza mesaj gönderin</li>
-                <li>
-                  <code>
-                    https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates
-                  </code>{" "}
-                  adresinden chat_id&apos;nizi alın
-                </li>
-              </ol>
-            </div>
-
-            <div>
-              <h3 className="font-medium text-gray-900 mb-2">
-                2. Upstash Redis:
-              </h3>
-              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
-                <li>
-                  <a
-                    href="https://upstash.com"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:text-blue-800 underline"
+          <CardContent className="pt-4">
+            {isLoading && duyurular.length === 0 ? (
+              <div className="text-center p-4 text-blue-600">Duyurular Yükleniyor...</div>
+            ) : duyurular.length > 0 ? (
+              <ul className="space-y-3">
+                {duyurular.map((duyuru) => (
+                  <li 
+                    key={duyuru.id} 
+                    className="border-b pb-3 last:border-b-0 last:pb-0"
                   >
-                    upstash.com
-                  </a>{" "}
-                  adresinde ücretsiz hesap oluşturun
-                </li>
-                <li>Yeni Redis database oluşturun</li>
-                <li>REST URL ve token&apos;larınızı kaydedin</li>
-              </ol>
-            </div>
-
-            <div>
-              <h3 className="font-medium text-gray-900 mb-2">
-                3. Environment Variables:
-              </h3>
-              <p className="text-sm text-gray-600 mb-2">
-                <code>env.example</code> dosyasını <code>.env.local</code>{" "}
-                olarak kopyalayın ve gerekli değerleri doldurun.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="font-medium text-gray-900 mb-2">
-                4. Vercel Deploy:
-              </h3>
-              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
-                <li>Projeyi GitHub&apos;a push edin</li>
-                <li>Vercel&apos;e bağlayın</li>
-                <li>Environment variables&apos;ları ekleyin</li>
-                <li>Deploy edin</li>
-              </ol>
-            </div>
+                    <Link
+                      href={duyuru.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-800 font-medium"
+                    >
+                      {duyuru.title}
+                    </Link>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {duyuru.date && formatDateTime(duyuru.date)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-center p-4 text-red-600">
+                Hiç duyuru bulunamadı veya bir hata oluştu.
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
