@@ -3,12 +3,5 @@
     "src/app/api/check-duyurular/route.ts": {
       "maxDuration": 30
     }
-  },
-  "env": {
-    "TG_TOKEN": "@tg_token",
-    "TG_CHAT_ID": "@tg_chat_id",
-    "UPSTASH_REDIS_REST_URL": "@upstash_redis_rest_url",
-    "UPSTASH_REDIS_REST_TOKEN": "@upstash_redis_rest_token",
-    "CRON_SECRET": "@cron_secret"
   }
 }
