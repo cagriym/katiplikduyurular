@@ -1,12 +1,10 @@
-// src/app/page.tsx
-
 "use client";
 
-import React, { useState, useEffect } from "react";
-import Button from "@/components/ui/Button";
-import { Card, CardContent, CardHeader } from "@/components/ui/Card";
-import { formatDateTime } from "@/lib/utils"; 
-import Link from "next/link"; 
+import React, { useState, useEffect, useCallback } from "react";
+// Button import'u adlandırılmış dışa aktarmaya (named export) uyarlandı
+import { Button } from "@/components/ui/Button"; 
+import { Card, CardContent, CardHeader } from "@/components/ui/Card"; 
+// import DuyuruCard from "@/components/DuyuruCard"; // Bileşeni doğrudan burada tanımlıyoruz
 
 interface Duyuru {
   title: string;
@@ -15,159 +13,242 @@ interface Duyuru {
   id: string;
 }
 
+// Varsayılan DuyuruCard bileşeni (Hata 418'e karşı koruma içerir)
+const DuyuruCard: React.FC<Omit<Duyuru, 'id'>> = ({ title, link, date }) => {
+    return (
+        <Card className="mb-3 hover:shadow-lg transition-shadow">
+            <CardContent className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center">
+                <div className="flex-1 min-w-0 pr-4">
+                    {/* Tarih ve Başlık alanları için koruma eklendi */}
+                    <p className="text-sm text-gray-500 mb-1">{date ? date : 'Tarih Yok'}</p>
+                    <h4 className="text-lg font-semibold text-gray-800 truncate">
+                        {title ? title : 'Başlık Yok'}
+                    </h4>
+                </div>
+                <a 
+                    // Link için koruma eklendi
+                    href={link || '#'} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="mt-2 sm:mt-0 text-white bg-blue-600 hover:bg-blue-700 font-medium rounded-lg text-sm px-4 py-2 text-center transition-colors"
+                >
+                    Görüntüle
+                </a>
+            </CardContent>
+        </Card>
+    );
+};
+
+
 export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<string>("");
   const [duyurular, setDuyurular] = useState<Duyuru[]>([]);
-  
-  // KRİTİK DÜZELTME: lastCheck'i güvenli bir tarih değeriyle başlat
-  const [lastCheck, setLastCheck] = useState<string>(new Date().toLocaleString("tr-TR")); 
+  const [lastCheck, setLastCheck] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
 
-  // Sadece duyuruları çekme fonksiyonu
-  const fetchDuyurular = () => {
+  // Duyurıları API'den çeken fonksiyon
+  const fetchDuyurular = useCallback(async () => {
     setIsLoading(true);
-    setResult("Duyurular yükleniyor...");
-
-    fetch("/api/get-duyurular")
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`API hatası: ${response.status} ${response.statusText}`);
-        }
-        return response.json();
-      })
-      .then(data => {
-        setDuyurular(data.duyurular || []);
-        setResult(`Duyurular başarıyla yüklendi. Toplam: ${data.duyurular?.length || 0}`);
-      })
-      .catch(error => {
-        console.error("Duyuruları çekerken kritik hata:", error);
+    setError(null);
+    try {
+      const response = await fetch("/api/get-duyurular");
+      const data = await response.json();
+      
+      if (data.success && Array.isArray(data.duyurular)) {
+        setDuyurular(data.duyurular);
+        setLastCheck(data.timestamp ? new Date(data.timestamp).toLocaleString("tr-TR") : new Date().toLocaleString("tr-TR"));
+      } else {
+         // Hata oluştuysa veya format uygun değilse
         setDuyurular([]);
-        setResult(
-          `Kritik Hata: Veri çekilemedi. (${error instanceof Error ? error.message : "Bilinmeyen hata"})`
-        );
-      })
-      .finally(() => {
-        setIsLoading(false); // Hata olsa da olmasa da yüklemeyi kapat (Kesin Çözüm)
-      });
-  };
+        setError(data.message || "Duyurular beklenmedik formatta geldi.");
+      }
+    } catch (error) {
+      setError(`Duyurular çekilemedi: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`);
+      setDuyurular([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
+  // Sayfa yüklendiğinde duyurıları çek
+  useEffect(() => {
+    fetchDuyurular();
+  }, [fetchDuyurular]);
 
-  // Manuel kontrol ve test butonu fonksiyonu
   const testDuyuruCheck = async () => {
     setIsLoading(true);
-    setResult("Kontrol başlatıldı, Telegram'a rapor bekleniyor...");
+    setResult("");
+    setError(null);
 
     try {
       const response = await fetch("/api/check-duyurular", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ test: true }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        // Reset parametresi eklendi, böylece yeni duyuru bildirimini test edebilirsiniz
+        body: JSON.stringify({ test: true, reset: false }), 
       });
 
       const data = await response.json();
+      setResult(JSON.stringify(data, null, 2));
       
-      if (!response.ok) {
-        throw new Error(`API Hatası: ${data.error || response.statusText}`);
-      }
-      
-      setResult(`Başarılı: ${data.message}`);
-      setLastCheck(new Date().toLocaleString("tr-TR"));
+      // Duyuruları da çek
+      await fetchDuyurular();
 
-      // Kontrol bittikten sonra duyuruları güncelle
-      fetchDuyurular(); 
-      
     } catch (error) {
-      setResult(
-        `Hata: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`
-      );
+      const errorMessage = `Hata: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`;
+      setResult(errorMessage);
+      setError(errorMessage);
     } finally {
-        // Test fonksiyonu fetchDuyurular'ı çağırdığı için burada tekrar kapatmaya gerek yok.
-        // Hata durumunda kapatılması, `catch` bloğunun sorumluluğundadır.
-        if (result.startsWith("Hata:")) {
-           setIsLoading(false);
-        }
+      // Artık sadece fetchDuyurular içinde isLoading kapanıyor.
+      // fetchDuyurular içindeki finally bloğu durumu doğru yönetecek.
+    }
+  };
+  
+  // Yeni: Verileri Sıfırlama fonksiyonu
+  const resetData = async () => {
+    // NOT: Kullanıcı onayı (modal/dialog) burada olmalıdır, ancak kısıtlamalar nedeniyle atlanmıştır.
+    // Sıfırlama işlemi Redis'teki tüm kayıtlı duyuruları siler ve bir sonraki kontrolde
+    // tüm duyuruların "yeni" olarak bildirilmesine neden olur.
+
+    setIsLoading(true);
+    setResult("");
+    setError(null);
+
+    try {
+      const response = await fetch("/api/check-duyurular", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        // Reset modunu aktif et: Redis'teki son kontrol edilen duyuruları sıfırlar.
+        body: JSON.stringify({ test: true, reset: true }), 
+      });
+
+      const data = await response.json();
+      setResult(JSON.stringify(data, null, 2));
+      
+      // Veriler sıfırlandıktan sonra listeyi yeniden çek
+      await fetchDuyurular();
+
+    } catch (error) {
+      const errorMessage = `Sıfırlama Hatası: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`;
+      setResult(errorMessage);
+      setError(errorMessage);
+    } finally {
+      // Artık sadece fetchDuyurular içinde isLoading kapanıyor.
     }
   };
 
-  // Sayfa yüklendiğinde otomatik olarak duyuruları çek
-  useEffect(() => {
-    fetchDuyurular();
-  }, []); 
-
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-4xl mx-auto space-y-8">
-        <h1 className="text-3xl font-bold text-gray-900 text-center">
-          Ankara Adliyesi Duyuru Takip Sistemi
-        </h1>
+    <div className="min-h-screen bg-gray-50 p-4 sm:p-8 font-inter">
+      <div className="max-w-4xl mx-auto">
+        <header className="text-center mb-10">
+          <h1 className="text-4xl font-extrabold text-blue-800 mb-2">
+            Ankara Adliyesi Duyuru Takip
+          </h1>
+          <p className="text-gray-600">
+            Cron Job (Zamanlanmış Görev) ve Manuel Duyuru Kontrol Paneli
+          </p>
+        </header>
 
-        {/* Kontrol ve Yenileme Butonları */}
-        <div className="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4">
-          <Button 
-            onClick={testDuyuruCheck} 
-            disabled={isLoading}
-            className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
-          >
-            {isLoading ? "Kontrol Ediliyor..." : "Duyuruları Yenile ve Test Et (POST)"}
-          </Button>
-          <Button 
-            onClick={fetchDuyurular} 
-            disabled={isLoading}
-            className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
-          >
-            {isLoading ? "Yükleniyor..." : "Sadece Görüntüle (GET)"}
-          </Button>
-        </div>
+        {/* Aksiyon ve Durum Kartı */}
+        <Card className="mb-8 bg-white shadow-lg">
+          <CardHeader title="Kontrol Durumu" />
+          <CardContent>
+            {/* Son Kontrol Durumu */}
+            <div className="text-sm font-medium text-gray-700 mb-4">
+                Son Kontrol:{" "}
+                <span className="font-semibold text-blue-600">
+                  {lastCheck || "Hiç kontrol yapılmadı."}
+                </span>
+            </div>
 
-        {/* Durum Kartı */}
-        <Card className="shadow-lg">
-          <CardHeader className="text-xl font-semibold border-b pb-3">
-            Sistem Durumu
-          </CardHeader>
-          <CardContent className="pt-4 space-y-2">
-            <p className="text-sm text-gray-700">
-              <span className="font-medium">Son Kontrol:</span>{" "}
-              {lastCheck}
+            {/* Aksiyon Butonları */}
+            <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 mb-4">
+              <Button
+                onClick={testDuyuruCheck}
+                disabled={isLoading}
+                className={`flex-1 px-6 py-2 transition-all duration-300 ${
+                    isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+                }`}
+              >
+                {isLoading ? (
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                ) : 'Duyuruları Yenile ve Test Et (POST)'}
+              </Button>
+              <Button
+                onClick={resetData}
+                disabled={isLoading}
+                // Sıfırlama butonu için dikkat çekici kırmızı renk kullanıldı
+                className={`flex-1 px-6 py-2 transition-all duration-300 ${
+                    isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'
+                }`}
+              >
+                {isLoading ? (
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                ) : 'Verileri Sıfırla (Redis)'}
+              </Button>
+            </div>
+            
+            {error && (
+                <div className="p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm mb-4">
+                    <p className="font-bold">Hata:</p>
+                    <p>{error}</p>
+                </div>
+            )}
+
+            <p className="text-sm text-gray-600 mt-2">
+                Durum Mesajı:{" "}
+                <span className="font-semibold text-gray-800">
+                  Duyurular başarıyla yüklendi. Toplam: {duyurular.length}
+                </span>
             </p>
-            <p className="text-sm text-gray-700">
-              <span className="font-medium">Durum Mesajı:</span>{" "}
-              <code className="bg-gray-200 p-1 rounded text-xs break-all">{result || "Beklemede"}</code>
-            </p>
+
+            {result && (
+              <div className="mt-4 p-4 bg-gray-100 rounded-lg whitespace-pre-wrap">
+                <p className="text-sm font-medium text-gray-700">API Yanıtı:</p>
+                {/* Hata koruması: 'result'ın string olduğundan emin oluyoruz */}
+                <pre className="text-xs text-gray-900 overflow-auto">{result.toString()}</pre> 
+              </div>
+            )}
+            
           </CardContent>
         </Card>
 
-        {/* Duyuru Listesi */}
-        <Card className="shadow-lg">
-          <CardHeader className="text-xl font-semibold border-b pb-3">
-            Bulunan Duyurular ({duyurular.length})
-          </CardHeader>
-          <CardContent className="pt-4">
-            {isLoading && duyurular.length === 0 ? (
-              <div className="text-center p-4 text-blue-600">Duyurular Yükleniyor...</div>
-            ) : duyurular.length > 0 ? (
-              <ul className="space-y-3">
-                {duyurular.map((duyuru) => (
-                  <li 
-                    key={duyuru.id} 
-                    className="border-b pb-3 last:border-b-0 last:pb-0"
-                  >
-                    <Link
-                      href={duyuru.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:text-blue-800 font-medium"
-                    >
-                      {duyuru.title}
-                    </Link>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {duyuru.date && formatDateTime(duyuru.date)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="text-center p-4 text-red-600">
+        {/* Duyuru Listesi Kartı */}
+        <Card className="mb-8 bg-white shadow-lg">
+          <CardHeader title={`Bulunan Duyurular (${duyurular.length})`} />
+          <CardContent>
+            {isLoading && duyurular.length === 0 && (
+                <div className="text-center py-6 text-gray-500">Duyurular yükleniyor...</div>
+            )}
+            
+            {duyurular.length === 0 && !isLoading && !error && (
+              <p className="text-center text-gray-500 py-6">
                 Hiç duyuru bulunamadı veya bir hata oluştu. Lütfen butona basıp deneyin.
+              </p>
+            )}
+
+            {duyurular.length > 0 && (
+              <div className="space-y-4">
+                {/* Hata koruması: Sadece geçerli duyuruları map'liyoruz */}
+                {duyurular.map((duyuru) => (
+                    <DuyuruCard
+                        key={duyuru.id}
+                        title={duyuru.title || 'Başlık Bilgisi Yok'} 
+                        link={duyuru.link || '#'}
+                        date={duyuru.date || 'Tarih Bilgisi Yok'}
+                    />
+                ))}
               </div>
             )}
           </CardContent>
