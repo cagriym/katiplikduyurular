@@ -1,103 +1,270 @@
-import Image from "next/image";
+"use client";
+
+import React, { useState } from "react";
+import Button from "@/components/ui/Button";
+import { Card, CardContent, CardHeader } from "@/components/ui/Card";
+
+interface Duyuru {
+  title: string;
+  link: string;
+  date: string;
+  id: string;
+}
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [isLoading, setIsLoading] = useState(false);
+  const [result, setResult] = useState<string>("");
+  const [duyurular, setDuyurular] = useState<Duyuru[]>([]);
+  const [lastCheck, setLastCheck] = useState<string>("");
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const testDuyuruCheck = async () => {
+    setIsLoading(true);
+    setResult("");
+
+    try {
+      const response = await fetch("/api/check-duyurular", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ test: true }),
+      });
+
+      const data = await response.json();
+      setResult(JSON.stringify(data, null, 2));
+      setLastCheck(new Date().toLocaleString("tr-TR"));
+
+      // Duyuruları da çek
+      await fetchDuyurular();
+    } catch (error) {
+      setResult(
+        `Hata: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchDuyurular = async () => {
+    try {
+      const response = await fetch("/api/get-duyurular");
+      if (response.ok) {
+        const data = await response.json();
+        setDuyurular(data.duyurular || []);
+      }
+    } catch (error) {
+      console.error("Duyurular çekilemedi:", error);
+    }
+  };
+
+  // Sayfa yüklendiğinde duyuruları çek
+  React.useEffect(() => {
+    fetchDuyurular();
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-4xl mx-auto">
+        <div className="text-center mb-12">
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
+            Ankara Adliyesi Duyuru Takip Sistemi
+          </h1>
+          <p className="text-lg text-gray-600">
+            Ankara Adliyesi sitesindeki duyuruları takip eder ve Telegram
+            üzerinden bildirim gönderir.
+          </p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        <div className="grid gap-8 md:grid-cols-2">
+          {/* Sistem Bilgileri */}
+          <Card>
+            <CardHeader>
+              <h2 className="text-xl font-semibold">Sistem Bilgileri</h2>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <h3 className="font-medium text-gray-900">Özellikler:</h3>
+                <ul className="mt-2 space-y-1 text-sm text-gray-600">
+                  <li>• Günde iki kez (09:00 ve 18:00) otomatik kontrol</li>
+                  <li>• Telegram bildirimleri</li>
+                  <li>• Upstash Redis ile veri saklama</li>
+                  <li>• Vercel Serverless fonksiyonları</li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="font-medium text-gray-900">Hedef Site:</h3>
+                <a
+                  href="https://ankara.adalet.gov.tr/duyurular"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:text-blue-800 underline"
+                >
+                  ankara.adalet.gov.tr/duyurular
+                </a>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Test Paneli */}
+          <Card>
+            <CardHeader>
+              <h2 className="text-xl font-semibold">Test Paneli</h2>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                onClick={testDuyuruCheck}
+                isLoading={isLoading}
+                className="w-full"
+              >
+                {isLoading ? "Kontrol Ediliyor..." : "Duyuru Kontrolü Test Et"}
+              </Button>
+
+              {result && (
+                <div className="mt-4">
+                  <h3 className="font-medium text-gray-900 mb-2">Sonuç:</h3>
+                  <pre className="bg-gray-100 p-3 rounded-md text-xs overflow-auto max-h-40">
+                    {result}
+                  </pre>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Duyurular Listesi */}
+        <Card className="mt-8">
+          <CardHeader>
+            <div className="flex justify-between items-center">
+              <h2 className="text-xl font-semibold">Son Duyurular</h2>
+              {lastCheck && (
+                <span className="text-sm text-gray-500">
+                  Son kontrol: {lastCheck}
+                </span>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {duyurular.length > 0 ? (
+              <div className="space-y-4">
+                {duyurular.slice(0, 10).map((duyuru, _index) => (
+                  <div // Düzeltildi: 'index' -> '_index'
+                    key={duyuru.id}
+                    className="border-l-4 border-blue-500 pl-4 py-2 hover:bg-gray-50 rounded-r-md transition-colors"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <h3 className="font-medium text-gray-900 mb-1 line-clamp-2">
+                          {duyuru.title}
+                        </h3>
+                        {duyuru.date && (
+                          <p className="text-sm text-gray-500 mb-2">
+                            📅 {duyuru.date}
+                          </p>
+                        )}
+                      </div>
+                      {duyuru.link && (
+                        <a
+                          href={duyuru.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-4 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                        >
+                          Görüntüle →
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {duyurular.length > 10 && (
+                  <p className="text-sm text-gray-500 text-center mt-4">
+                    Ve {duyurular.length - 10} duyuru daha...
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-gray-500 mb-4">
+                  Henüz duyuru çekilmedi. Test butonuna tıklayarak duyuruları
+                  çekebilirsiniz.
+                </p>
+                <Button onClick={fetchDuyurular} variant="outline">
+                  Duyuruları Yenile
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Kurulum Talimatları */}
+        <Card className="mt-8">
+          <CardHeader>
+            <h2 className="text-xl font-semibold">Kurulum Talimatları</h2>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <h3 className="font-medium text-gray-900 mb-2">
+                1. Telegram Bot Oluşturma:
+              </h3>
+              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
+                <li>@BotFather&apos;a mesaj gönderin</li>
+                <li>/newbot komutunu kullanın</li>
+                <li>Bot token&apos;ınızı kaydedin</li>
+                <li>Bot&apos;unuza mesaj gönderin</li>
+                <li>
+                  <code>
+                    https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates
+                  </code>{" "}
+                  adresinden chat_id&apos;nizi alın
+                </li>
+              </ol>
+            </div>
+
+            <div>
+              <h3 className="font-medium text-gray-900 mb-2">
+                2. Upstash Redis:
+              </h3>
+              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
+                <li>
+                  <a
+                    href="https://upstash.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 underline"
+                  >
+                    upstash.com
+                  </a>{" "}
+                  adresinde ücretsiz hesap oluşturun
+                </li>
+                <li>Yeni Redis database oluşturun</li>
+                <li>REST URL ve token&apos;larınızı kaydedin</li>
+              </ol>
+            </div>
+
+            <div>
+              <h3 className="font-medium text-gray-900 mb-2">
+                3. Environment Variables:
+              </h3>
+              <p className="text-sm text-gray-600 mb-2">
+                <code>env.example</code> dosyasını <code>.env.local</code>{" "}
+                olarak kopyalayın ve gerekli değerleri doldurun.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="font-medium text-gray-900 mb-2">
+                4. Vercel Deploy:
+              </h3>
+              <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
+                <li>Projeyi GitHub&apos;a push edin</li>
+                <li>Vercel&apos;e bağlayın</li>
+                <li>Environment variables&apos;ları ekleyin</li>
+                <li>Deploy edin</li>
+              </ol>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
