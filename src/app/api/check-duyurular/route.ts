@@ -89,7 +89,8 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
 
         let title = $element.text().trim();
         let link = $element.attr("href") || "";
-        let date = $element.find(".date, .tarih").first().text().trim() || "";
+        // Hata 1 DÜZELTİLDİ: 'date' değişkeni atamadan önce değiştirilmediği için 'const' yapıldı.
+        const date = $element.find(".date, .tarih").first().text().trim() || "";
 
 
         // Eğer element liste elemanı değilse (örneğin sadece <a>) ve boşsa, linki kendisinden al
@@ -160,7 +161,8 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
 async function checkForNewDuyurular(): Promise<void> {
   let previousDuyurular: Duyuru[] = [];
   let currentDuyurular: Duyuru[] = [];
-  let newDuyurular: Duyuru[] = [];
+  // Hata 2 DÜZELTİLDİ: 'newDuyurular' değişkeni atamadan önce değiştirilmediği için 'const' yapıldı.
+  const newDuyurular: Duyuru[] = [];
 
   try {
     // 1. Önceki duyuruları Redis'ten çek
