@@ -1,23 +1,22 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+// src/app/layout.tsx
+
+import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Katiplik Kontrol",
-  description: "Katiplik kontrol uygulaması - Ders katılım takip sistemi",
-  keywords: ["katiplik", "kontrol", "ders", "takip", "eğitim"],
-  authors: [{ name: "Katiplik Kontrol Team" }],
-  viewport: "width=device-width, initial-scale=1",
+  title: "Ankara Adliyesi Duyuru Takip Sistemi",
+  description: "Ankara Adliyesi web sitesindeki duyuruları takip edin.",
+  // Diğer metadata ayarları buraya gelebilir
+};
+
+// KRİTİK DÜZELTME: Viewport artık ayrı bir export
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({
@@ -27,11 +26,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="tr">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
-      </body>
+      <body className={inter.className}>{children}</body>
     </html>
   );
 }

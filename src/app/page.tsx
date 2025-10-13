@@ -1,10 +1,12 @@
+// src/app/page.tsx
+
 "use client";
 
 import React, { useState, useEffect } from "react";
 import Button from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
-import { formatDateTime } from "@/lib/utils"; // utils'tan tarih formatlama fonksiyonu
-import Link from "next/link"; // Next.js Link bileşeni
+import { formatDateTime } from "@/lib/utils"; 
+import Link from "next/link"; 
 
 interface Duyuru {
   title: string;
@@ -14,34 +16,39 @@ interface Duyuru {
 }
 
 export default function Home() {
-  // Yükleme durumu başlangıçta true olmalı (ilk yükleme için)
-  const [isLoading, setIsLoading] = useState(true); 
+  const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<string>("");
   const [duyurular, setDuyurular] = useState<Duyuru[]>([]);
-  const [lastCheck, setLastCheck] = useState<string>(new Date().toLocaleString("tr-TR"));
+  
+  // KRİTİK DÜZELTME: lastCheck'i güvenli bir tarih değeriyle başlat
+  const [lastCheck, setLastCheck] = useState<string>(new Date().toLocaleString("tr-TR")); 
 
   // Sadece duyuruları çekme fonksiyonu
-  const fetchDuyurular = async () => {
-    setIsLoading(true); // Yükleme durumunu başlat
-    try {
-      const response = await fetch("/api/get-duyurular");
+  const fetchDuyurular = () => {
+    setIsLoading(true);
+    setResult("Duyurular yükleniyor...");
 
-      if (!response.ok) {
-        // API'den 500 gibi bir hata gelirse
-        throw new Error(`Veri çekilemedi: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setDuyurular(data.duyurular || []);
-    } catch (error) {
-      console.error("Duyuruları çekerken hata:", error);
-      setDuyurular([]); // Hata durumunda boş liste göster
-      setResult(
-        `Kritik Hata: Duyurular yüklenemedi. Redis bağlantısını kontrol edin. (${error instanceof Error ? error.message : "Bilinmeyen hata"})`
-      );
-    } finally {
-      setIsLoading(false); // Her durumda yükleme durumunu kapat! (CRITICAL FIX)
-    }
+    fetch("/api/get-duyurular")
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`API hatası: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        setDuyurular(data.duyurular || []);
+        setResult(`Duyurular başarıyla yüklendi. Toplam: ${data.duyurular?.length || 0}`);
+      })
+      .catch(error => {
+        console.error("Duyuruları çekerken kritik hata:", error);
+        setDuyurular([]);
+        setResult(
+          `Kritik Hata: Veri çekilemedi. (${error instanceof Error ? error.message : "Bilinmeyen hata"})`
+        );
+      })
+      .finally(() => {
+        setIsLoading(false); // Hata olsa da olmasa da yüklemeyi kapat (Kesin Çözüm)
+      });
   };
 
 
@@ -53,9 +60,7 @@ export default function Home() {
     try {
       const response = await fetch("/api/check-duyurular", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ test: true }),
       });
 
@@ -69,21 +74,25 @@ export default function Home() {
       setLastCheck(new Date().toLocaleString("tr-TR"));
 
       // Kontrol bittikten sonra duyuruları güncelle
-      await fetchDuyurular(); 
-
+      fetchDuyurular(); 
+      
     } catch (error) {
       setResult(
         `Hata: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`
       );
     } finally {
-      setIsLoading(false); // Her durumda yükleme durumunu kapat! (CRITICAL FIX)
+        // Test fonksiyonu fetchDuyurular'ı çağırdığı için burada tekrar kapatmaya gerek yok.
+        // Hata durumunda kapatılması, `catch` bloğunun sorumluluğundadır.
+        if (result.startsWith("Hata:")) {
+           setIsLoading(false);
+        }
     }
   };
 
   // Sayfa yüklendiğinde otomatik olarak duyuruları çek
   useEffect(() => {
     fetchDuyurular();
-  }, []); // Sadece bir kez çalışır
+  }, []); 
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -118,7 +127,7 @@ export default function Home() {
           <CardContent className="pt-4 space-y-2">
             <p className="text-sm text-gray-700">
               <span className="font-medium">Son Kontrol:</span>{" "}
-              {lastCheck} (UTC: {new Date(lastCheck).toISOString()})
+              {lastCheck}
             </p>
             <p className="text-sm text-gray-700">
               <span className="font-medium">Durum Mesajı:</span>{" "}
@@ -158,7 +167,7 @@ export default function Home() {
               </ul>
             ) : (
               <div className="text-center p-4 text-red-600">
-                Hiç duyuru bulunamadı veya bir hata oluştu.
+                Hiç duyuru bulunamadı veya bir hata oluştu. Lütfen butona basıp deneyin.
               </div>
             )}
           </CardContent>
