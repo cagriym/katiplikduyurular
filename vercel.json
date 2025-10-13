@@ -1,10 +1,4 @@
 {
-  "crons": [
-    {
-      "path": "/api/check-duyurular",
-      "schedule": "0 9,18 * * *"
-    }
-  ],
   "functions": {
     "src/app/api/check-duyurular/route.ts": {
       "maxDuration": 30
