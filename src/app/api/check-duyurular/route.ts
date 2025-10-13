@@ -81,61 +81,74 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
       const $ = cheerio.load(response.data);
       const duyurular: Duyuru[] = [];
 
-      // Güvenilir bir şekilde duyuruları bulmak için birden fazla selector kullanıyoruz
-      $(
-        "a[href*='/duyuru/'], a[href*='/ilan/'], .duyuru-item, .news-item"
-      ).each((index, element) => {
+      // GÜNCELLENDİ: Daha geniş ve güvenilir selector seti
+      // Duyuru öğelerini içeren ana container'ı bulmaya çalışıyoruz.
+      // Ardından içindeki linkleri çekiyoruz.
+      const selectors = [
+          "a[href*='/duyuru/']", // Doğrudan duyuru linkleri
+          "a[href*='/ilan/']", // Doğrudan ilan linkleri
+          ".duyuru-item a", // .duyuru-item içindeki linkler
+          ".news-item a", // .news-item içindeki linkler
+          ".list-unstyled li a", // Basit liste yapısındaki linkler
+      ];
+      
+      const uniqueLinks = new Set<string>();
+
+      $(selectors.join(', ')).each((index, element) => {
         const $element = $(element);
 
-        let title = $element.text().trim();
+        // Linki al
         let link = $element.attr("href") || "";
-        // Hata 1 DÜZELTİLDİ: 'date' değişkeni atamadan önce değiştirilmediği için 'const' yapıldı.
-        const date = $element.find(".date, .tarih").first().text().trim() || "";
+        if (!link) return;
 
-
-        // Eğer element liste elemanı değilse (örneğin sadece <a>) ve boşsa, linki kendisinden al
-        if ($element.is('a') && title.length < 10) {
-             title = $element.text().trim();
-             link = $element.attr("href") || "";
-        }
-        
-        // Eğer link bir liste elemanının içindeki link ise
-        if (!link) {
-            const innerLink = $element.find('a').first();
-            link = innerLink.attr('href') || '';
-            title = innerLink.text().trim() || title;
-        }
-
-        // Mantıklı duyuru başlıklarını filtrele
-        if (
-          title &&
-          title.length > 10 &&
-          !title.includes("BASIN DUYURULARI") &&
-          !title.includes("TÜMÜ") &&
-          !title.includes("Ana Sayfa") &&
-          link &&
-          (link.includes("duyuru") || link.includes("ilan") || link.includes("basin"))
-        ) {
-          const fullLink = link.startsWith("http")
+        // Tam linki oluştur
+        const fullLink = link.startsWith("http")
             ? link
             : `https://ankara.adalet.gov.tr${
                 link.startsWith("/") ? link : "/" + link
               }`;
 
-          // Duyuru ID'si oluşturma
-          const id = Buffer.from(title + link)
-            .toString("base64")
-            .substring(0, 16);
+        // Link tekrar eden bir link ise atla (örneğin "tümü" linkleri)
+        if (uniqueLinks.has(fullLink)) return;
+        
+        // Başlığı al: önce linkin içindeki metni, yoksa içindeki span/strong/h etiketlerini dene
+        let title = $element.text().trim() || $element.find('span, strong, h1, h2, h3, h4').first().text().trim() || '';
 
-          // Tekrar edenleri engellemek için basit bir kontrol
-          if (!duyurular.some(d => d.id === id)) {
-              duyurular.push({
+        // Eğer başlık çok kısaysa veya alakasız kelimeler içeriyorsa atla
+        if (
+          title.length < 15 || // Başlık çok kısa olmasın
+          title.toLowerCase().includes("tümü") ||
+          title.toLowerCase().includes("ana sayfa") ||
+          title.toLowerCase().includes("arsiv")
+        ) {
+            // Başlık çok kısaysa ama bir tarih içeriyorsa, muhtemelen bir liste öğesi başlığıdır.
+            // Bu durumda, bir sonraki adımı atlamamak için devam ediyoruz.
+        }
+
+        // Başlıkta hala bir şey yoksa, sadece linkteki metni kullanmaya devam ediyoruz.
+        if (!title && $element.text().trim().length > 15) {
+             title = $element.text().trim();
+        }
+
+        if (title.length > 10) {
+            // Tarihi al
+            const date = $element.siblings(".date, .tarih").first().text().trim() || 
+                         $element.parent().find(".date, .tarih").first().text().trim() ||
+                         new Date().toLocaleDateString("tr-TR");
+
+            // Duyuru ID'si oluşturma
+            const id = Buffer.from(title + link)
+                .toString("base64")
+                .substring(0, 16);
+
+            duyurular.push({
                 title,
                 link: fullLink,
-                date: date || new Date().toLocaleDateString("tr-TR"),
+                date: date,
                 id,
-              });
-          }
+            });
+            
+            uniqueLinks.add(fullLink);
         }
       });
       
