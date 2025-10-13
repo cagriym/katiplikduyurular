@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/check-duyurular",
-      "schedule": "0 9,18 * * *" // Düzeltildi: Sabah 09:00 ve Akşam 18:00'da çalışacak
+      "schedule": "0 9,18 * * *"
     }
   ],
   "functions": {
