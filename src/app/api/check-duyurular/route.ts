@@ -82,8 +82,6 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
       const duyurular: Duyuru[] = [];
 
       // GÜNCELLENDİ: Daha geniş ve güvenilir selector seti
-      // Duyuru öğelerini içeren ana container'ı bulmaya çalışıyoruz.
-      // Ardından içindeki linkleri çekiyoruz.
       const selectors = [
           "a[href*='/duyuru/']", // Doğrudan duyuru linkleri
           "a[href*='/ilan/']", // Doğrudan ilan linkleri
@@ -97,8 +95,8 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
       $(selectors.join(', ')).each((index, element) => {
         const $element = $(element);
 
-        // Linki al
-        let link = $element.attr("href") || "";
+        // Hata Düzeltildi: 'link' artık const
+        const link = $element.attr("href") || "";
         if (!link) return;
 
         // Tam linki oluştur
@@ -111,7 +109,7 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
         // Link tekrar eden bir link ise atla (örneğin "tümü" linkleri)
         if (uniqueLinks.has(fullLink)) return;
         
-        // Başlığı al: önce linkin içindeki metni, yoksa içindeki span/strong/h etiketlerini dene
+        // Başlığı al: 'let' kullanıldı çünkü if bloğunda yeniden değer atanıyor
         let title = $element.text().trim() || $element.find('span, strong, h1, h2, h3, h4').first().text().trim() || '';
 
         // Eğer başlık çok kısaysa veya alakasız kelimeler içeriyorsa atla
@@ -174,7 +172,6 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
 async function checkForNewDuyurular(): Promise<void> {
   let previousDuyurular: Duyuru[] = [];
   let currentDuyurular: Duyuru[] = [];
-  // Hata 2 DÜZELTİLDİ: 'newDuyurular' değişkeni atamadan önce değiştirilmediği için 'const' yapıldı.
   const newDuyurular: Duyuru[] = [];
 
   try {
