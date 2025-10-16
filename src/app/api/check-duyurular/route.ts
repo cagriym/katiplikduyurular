@@ -349,7 +349,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Redis'ten dönen veriyi JSON.parse ile işleyin
-      let parsedDuyurular: any[];
+      let parsedDuyurular: Duyuru[];
       try {
         parsedDuyurular = typeof duyurular === "string" ? JSON.parse(duyurular) : [];
       } catch (error) {
