@@ -3,11 +3,16 @@
 import React, { useState, useEffect, useCallback } from "react";
 
 // Varsayılan cn fonksiyonu (tailwind sınıflarını birleştirmek için)
-const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
+// Hata 6:25 çözümü: 'any' yerine daha kısıtlı bir tür kullanıldı.
+const cn = (...classes: (string | boolean | undefined)[]): string =>
+  classes.filter(Boolean).join(" ");
 
 // -- Yardımcı Bileşenler (Card ve Button'ın minimalist tanımları) --
 
-interface CardProps extends React.HTMLAttributes<HTMLDivElement> {}
+// Hata 10:11 çözümü: Boş arayüz uyarısını gidermek için tek bir opsiyonel alan eklendi.
+interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+  asChild?: boolean;
+}
 export const Card: React.FC<CardProps> = ({
   className,
   children,
@@ -50,7 +55,10 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
   </div>
 );
 
-interface CardContentProps extends React.HTMLAttributes<HTMLDivElement> {}
+// Hata 53:11 çözümü: Boş arayüz uyarısını gidermek için tek bir opsiyonel alan eklendi.
+interface CardContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  asChild?: boolean;
+}
 export const CardContent: React.FC<CardContentProps> = ({
   className,
   children,
@@ -61,7 +69,10 @@ export const CardContent: React.FC<CardContentProps> = ({
   </div>
 );
 
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {}
+// Hata 64:11 çözümü: Boş arayüz uyarısını gidermek için tek bir opsiyonel alan eklendi.
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  asChild?: boolean;
+}
 export const Button: React.FC<ButtonProps> = ({
   className,
   children,
@@ -110,7 +121,11 @@ export default function App() {
   const fetchDuyurular = useCallback(async () => {
     setError(null);
     try {
-      const response = await fetch("/api/get-duyurular");
+      // Hata Düzeltme: Relative URL hatasını gidermek için absolute URL kullanıldı.
+      const apiPath = "/api/get-duyurular";
+      const url = `${window.location.origin}${apiPath}`;
+
+      const response = await fetch(url);
 
       if (!response.ok) {
         // HTTP hatası (4xx, 5xx)
@@ -128,15 +143,17 @@ export default function App() {
       } else {
         setStatus(`Duyurular başarıyla yüklendi.`);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      // 'any' yerine 'unknown' kullanıldı.
       console.error("Veri çekme hatası:", err);
-      // Başlangıçta alınan "Duyurular beklenmedik formatta geldi" hatası artık buraya düşmeyecektir,
-      // çünkü backend her zaman JSON döndürüyor.
-      setError(
-        `Hata: Duyurular yüklenemedi. Detay: ${
-          err.message || "Bilinmeyen Hata"
-        }`
-      );
+      // Hata mesajını daha güvenli oluşturma
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+          ? err
+          : "Bilinmeyen Hata";
+      setError(`Hata: Duyurular yüklenemedi. Detay: ${errorMessage}`);
       setStatus("Sonuç: HATA");
     }
   }, []);
@@ -154,7 +171,11 @@ export default function App() {
     setStatus("Duyurular Yenileniyor, lütfen bekleyin...");
 
     try {
-      const response = await fetch("/api/check-duyurular", {
+      // Hata Düzeltme: Relative URL hatasını gidermek için absolute URL kullanıldı.
+      const apiPath = "/api/check-duyurular";
+      const url = `${window.location.origin}${apiPath}`;
+
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ test: true, reset: false }),
@@ -167,14 +188,21 @@ export default function App() {
         // Yeni duyurular çekildikten sonra Redis'ten güncel veriyi al
         await fetchDuyurular();
       } else {
-        // Backend'den gelen hata detaylarını göster (Unexpected token hatasını engelleyen kısım)
+        // Backend'den gelen hata detaylarını göster
         setError(`Hata: ${result.error}. Detay: ${result.details}`);
         setStatus("Sonuç: HATA");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      // 'any' yerine 'unknown' kullanıldı.
       console.error("Yenileme API hatası:", err);
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+          ? err
+          : "Bilinmeyen Hata";
       setError(
-        `Hata: Yenileme işlemi sırasında sunucuya ulaşılamadı. Detay: ${err.message}`
+        `Hata: Yenileme işlemi sırasında sunucuya ulaşılamadı. Detay: ${errorMessage}`
       );
       setStatus("Sonuç: HATA");
     } finally {
@@ -197,7 +225,11 @@ export default function App() {
     setStatus("Redis verileri sıfırlanıyor...");
 
     try {
-      const response = await fetch("/api/check-duyurular", {
+      // Hata Düzeltme: Relative URL hatasını gidermek için absolute URL kullanıldı.
+      const apiPath = "/api/check-duyurular";
+      const url = `${window.location.origin}${apiPath}`;
+
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reset: true }),
@@ -214,10 +246,17 @@ export default function App() {
         setError(`Hata: ${result.error}. Detay: ${result.details}`);
         setStatus("Sonuç: HATA");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      // 'any' yerine 'unknown' kullanıldı.
       console.error("Sıfırlama API hatası:", err);
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+          ? err
+          : "Bilinmeyen Hata";
       setError(
-        `Hata: Sıfırlama işlemi sırasında sunucuya ulaşılamadı. Detay: ${err.message}`
+        `Hata: Sıfırlama işlemi sırasında sunucuya ulaşılamadı. Detay: ${errorMessage}`
       );
       setStatus("Sonuç: HATA");
     } finally {
