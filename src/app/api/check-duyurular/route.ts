@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { Redis } from "@upstash/redis"; 
+import { Redis } from "@upstash/redis";
 
 // Upstash Redis bağlantısı
 let redis: Redis | null = null;
@@ -37,254 +37,190 @@ interface Duyuru {
 }
 
 /**
+ * Linkin tam bir URL olup olmadığını kontrol eder.
+ * @param url Kontrol edilecek link
+ */
+const isAbsoluteUrl = (url: string) => /^(?:[a-z]+:)?\/\//i.test(url);
+
+/**
+ * Ankara Adliyesi arşiv sayfasından duyuruları çek
+ * GÜNCELLEME: Doğru HTML yapısını hedeflemek için seçici güncellendi.
+ */
+async function fetchDuyurular(): Promise<Duyuru[]> {
+  try {
+    const response = await axios.get(DUYURULAR_URL, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.8,en-US;q.5,en;q.3",
+      },
+    });
+    const $ = cheerio.load(response.data);
+    const duyurular: Duyuru[] = [];
+    const baseUrl = "https://ankara.adalet.gov.tr";
+
+    // En genel ve doğru seçici olan "div.media" kullanıldı.
+    $("div.media").each((i, element) => {
+      const titleElement = $(element).find(".media-body h4 a");
+      const title = titleElement.text().trim();
+      let link = titleElement.attr("href") || "";
+
+      // Tarih çekme: .media-body içindeki .date sınıfı
+      const date = $(element).find(".media-body .date").text().trim();
+
+      // Link birleştirme kontrolü
+      if (link && !isAbsoluteUrl(link)) {
+        link = baseUrl + link;
+      }
+
+      if (title && link) {
+        // Başlıkta olası birden fazla boşluğu tek boşluğa indir
+        const cleanTitle = title.replace(/\s\s+/g, " ").trim();
+
+        duyurular.push({
+          title: cleanTitle,
+          link: link,
+          date: date || "Tarih Yok",
+          id: link.split("/").pop() || i.toString(),
+        });
+      }
+    });
+
+    console.log(
+      `[Scraper] Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length}`
+    );
+
+    if (duyurular.length === 0) {
+      // Çekilen duyuru sayısı sıfırsa hata fırlat
+      throw new Error(
+        "Duyuru çekme başarısız oldu veya web sitesi yapısı değişti (Toplam 0)."
+      );
+    }
+
+    return duyurular;
+  } catch (error: unknown) {
+    console.error("[Scraper Hata] Duyuru çekme hatası:", error);
+    // Hata durumunda boş liste dönmek yerine hata fırlatmak daha doğru
+    throw new Error(
+      `Duyuru çekme sırasında hata oluştu: ${
+        error instanceof Error ? error.message : "Bilinmeyen Hata"
+      }`
+    );
+  }
+}
+
+/**
  * Telegram'a mesaj gönder
  */
 async function sendTelegramMessage(message: string): Promise<void> {
   if (!TG_TOKEN || !TG_CHAT_ID) {
-    console.error("Telegram bot bilgileri eksik!");
+    console.error("Telegram bot bilgileri eksik. Bildirim gönderilemedi.");
     return;
   }
 
+  const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+
   try {
-    await axios.post(
-      `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`,
-      {
-        chat_id: TG_CHAT_ID,
-        text: message,
-        parse_mode: "HTML",
-      }
-    );
-    console.log("Telegram mesajı gönderildi.");
+    await axios.post(url, {
+      chat_id: TG_CHAT_ID,
+      text: message,
+      parse_mode: "HTML",
+    });
   } catch (error) {
-    console.error("Telegram mesajı gönderilemedi:", error);
+    console.error("Telegram mesajı gönderme hatası:", error);
   }
 }
 
 /**
- * Ankara Adliyesi duyurular sayfasından duyuruları çek
+ * Yeni duyurular için Telegram mesajı oluşturur
  */
-async function fetchDuyurular(): Promise<Duyuru[]> {
-  const maxRetries = 3;
-  let lastError: unknown; 
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`Duyurular sayfası çekiliyor... (Deneme ${attempt})`);
-      const response = await axios.get(DUYURULAR_URL, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        },
-        timeout: 15000,
-      });
-
-      const $ = cheerio.load(response.data);
-      const duyurular: Duyuru[] = [];
-
-      // GÜNCELLENDİ: Daha geniş ve güvenilir selector seti
-      const selectors = [
-          "a[href*='/duyuru/']", // Doğrudan duyuru linkleri
-          "a[href*='/ilan/']", // Doğrudan ilan linkleri
-          ".duyuru-item a", // .duyuru-item içindeki linkler
-          ".news-item a", // .news-item içindeki linkler
-          ".list-unstyled li a", // Basit liste yapısındaki linkler
-      ];
-      
-      const uniqueLinks = new Set<string>();
-
-      $(selectors.join(', ')).each((index, element) => {
-        const $element = $(element);
-
-        // Hata Düzeltildi: 'link' artık const
-        const link = $element.attr("href") || "";
-        if (!link) return;
-
-        // Tam linki oluştur
-        const fullLink = link.startsWith("http")
-            ? link
-            : `https://ankara.adalet.gov.tr${
-                link.startsWith("/") ? link : "/" + link
-              }`;
-
-        // Link tekrar eden bir link ise atla (örneğin "tümü" linkleri)
-        if (uniqueLinks.has(fullLink)) return;
-        
-        // Başlığı al: 'let' kullanıldı çünkü if bloğunda yeniden değer atanıyor
-        let title = $element.text().trim() || $element.find('span, strong, h1, h2, h3, h4').first().text().trim() || '';
-
-        // Eğer başlık çok kısaysa veya alakasız kelimeler içeriyorsa atla
-        if (
-          title.length < 15 || // Başlık çok kısa olmasın
-          title.toLowerCase().includes("tümü") ||
-          title.toLowerCase().includes("ana sayfa") ||
-          title.toLowerCase().includes("arsiv")
-        ) {
-            // Başlık çok kısaysa ama bir tarih içeriyorsa, muhtemelen bir liste öğesi başlığıdır.
-            // Bu durumda, bir sonraki adımı atlamamak için devam ediyoruz.
-        }
-
-        // Başlıkta hala bir şey yoksa, sadece linkteki metni kullanmaya devam ediyoruz.
-        if (!title && $element.text().trim().length > 15) {
-             title = $element.text().trim();
-        }
-
-        if (title.length > 10) {
-            // Tarihi al
-            const date = $element.siblings(".date, .tarih").first().text().trim() || 
-                         $element.parent().find(".date, .tarih").first().text().trim() ||
-                         new Date().toLocaleDateString("tr-TR");
-
-            // Duyuru ID'si oluşturma
-            const id = Buffer.from(title + link)
-                .toString("base64")
-                .substring(0, 16);
-
-            duyurular.push({
-                title,
-                link: fullLink,
-                date: date,
-                id,
-            });
-            
-            uniqueLinks.add(fullLink);
-        }
-      });
-      
-      console.log(`${duyurular.length} duyuru bulundu`);
-      // En yeni duyurular en başta olacak şekilde sıralıyoruz (genellikle sitede böyledir)
-      return duyurular.slice(0, 50); // Sadece ilk 50 tanesini döndürelim
-    } catch (error) {
-      lastError = error;
-      console.error(`Deneme ${attempt} başarısız:`, error);
-      if (attempt < maxRetries) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    }
-  }
-
-  // Tüm denemeler başarısız olursa hatayı fırlat
-  throw lastError; 
+function formatNewDuyuruMessage(duyuru: Duyuru): string {
+  return (
+    `✨ <b>YENİ DUYURU!</b>\n\n` +
+    `Başlık: <b>${duyuru.title}</b>\n` +
+    `Tarih: 📅 ${duyuru.date}\n` +
+    `Bağlantı: 🔗 <a href="${duyuru.link}">Görüntüle</a>\n\n` +
+    `#AnkaraAdliye #YeniDuyuru`
+  );
 }
 
 /**
- * Yeni duyuruları kontrol et ve bildirim gönder
+ * Web sitesini kontrol eder, yeni duyuruları bulur ve Redis'e kaydeder.
+ * Yeni duyuru varsa Telegram'a bildirim gönderir.
  */
-async function checkForNewDuyurular(): Promise<void> {
-  let previousDuyurular: Duyuru[] = [];
-  let currentDuyurular: Duyuru[] = [];
+async function checkForNewDuyurular() {
+  if (!redis) {
+    console.warn("Redis bağlantısı yok, kontrol atlanıyor.");
+    return;
+  }
+
+  // 1. Web sitesinden güncel duyuruları çek
+  const currentDuyurular = await fetchDuyurular();
+
+  // 2. Redis'ten kaydedilmiş duyuruları çek
+  const storedDuyurularRaw = await redis.get<Duyuru[] | null>("all_duyurular");
+  const storedDuyurular: Duyuru[] = storedDuyurularRaw || [];
+
+  // 3. Karşılaştırma için ID listesi oluştur
+  const storedIds = new Set(storedDuyurular.map((d) => d.id));
+
   const newDuyurular: Duyuru[] = [];
 
-  try {
-    // 1. Önceki duyuruları Redis'ten çek
-    if (redis) {
-      const storedData = await redis.get("all_duyurular");
-      if (storedData) {
-        previousDuyurular = storedData as Duyuru[];
-        console.log(`${previousDuyurular.length} adet önceki duyuru Redis'ten yüklendi.`);
-      }
+  // 4. Yeni duyuruları bul
+  for (const duyuru of currentDuyurular) {
+    if (!storedIds.has(duyuru.id)) {
+      newDuyurular.push(duyuru);
+    }
+  }
+
+  // 5. Yeni duyurular varsa bildirim gönder ve Redis'i güncelle
+  if (newDuyurular.length > 0) {
+    console.log(`🚨 ${newDuyurular.length} yeni duyuru bulundu!`);
+
+    for (const duyuru of newDuyurular) {
+      await sendTelegramMessage(formatNewDuyuruMessage(duyuru));
     }
 
-    // 2. Mevcut duyuruları çek
-    try {
-        currentDuyurular = await fetchDuyurular();
-    } catch (e) {
-        // Scraping başarısız olursa, eski veriyi koruyarak devam et
-        console.warn("Scraping başarısız oldu, eski veriler korunuyor. Hata:", e);
-        if (previousDuyurular.length > 0) {
-            await sendTelegramMessage(`
-            ⚠️ <b>DUYURU ÇEKME HATASI</b>
-            
-            Ankara Adliyesi sitesine ulaşılamadı. Eski veriler korunuyor.
-            
-            #Hata #Scraping
-            `.trim());
-        }
-        return; 
-    }
+    // Yeni duyuruları en üste ekleyerek Redis'i güncelle
+    const updatedDuyurular = [...newDuyurular, ...storedDuyurular].slice(0, 50); // En fazla 50 duyuru tut
+    await redis.set("all_duyurular", updatedDuyurular);
+    console.log("Redis duyuruları güncellendi ve bildirimler gönderildi.");
+  } else {
+    console.log("✅ Yeni duyuru bulunamadı.");
+  }
 
-    if (currentDuyurular.length === 0) {
-      console.warn("Scraping başarılı oldu ancak hiç duyuru bulunamadı.");
-      // İlk defa veya Redis boşken sıfır sonuç gelirse:
-      if (previousDuyurular.length === 0) {
-         await sendTelegramMessage(`
-          ⚠️ <b>DUYURU BULUNAMADI</b>
-          
-          Kontrol tamamlandı ancak sitede hiç duyuru bulunamadı.
-          
-          #Hata
-          `.trim());
-      }
-      return; 
-    }
-
-    // 3. Yeni duyuruları bul
-    const previousIds = new Set(previousDuyurular.map(d => d.id));
-    
-    // Sadece en son çekilen ilk 10 duyuru içinde yenileri arayalım
-    for (const duyuru of currentDuyurular.slice(0, 10)) {
-        if (!previousIds.has(duyuru.id)) {
-            newDuyurular.push(duyuru);
-        }
-    }
-
-    // Yeni bulunanları en yeni başa gelecek şekilde ters çevir
-    newDuyurular.reverse(); 
-
-    // 4. Yeni duyuru varsa bildirim gönder
-    if (newDuyurular.length > 0) {
-        let message = `🆕 <b>${newDuyurular.length} Adet Yeni Duyuru!</b>\n\n`;
-
-        newDuyurular.forEach(duyuru => {
-            message += `📋 <b>${duyuru.title}</b>\n`;
-            message += `📅 ${duyuru.date}\n`;
-            message += `🔗 <a href="${duyuru.link}">Görüntüle</a>\n\n`;
-        });
-        message += "#AnkaraAdliye #YeniDuyuru";
-
-        await sendTelegramMessage(message);
-    } else {
-        console.log("Yeni duyuru bulunamadı.");
-    }
-    
-    // 5. Redis'i güncelle
-    if (redis) {
-        // En son çekilen duyuruları Redis'e yaz
-        await redis.set("all_duyurular", currentDuyurular, { ex: 60 * 60 * 24 * 7 }); // 7 gün sakla
-        console.log("Redis'teki duyurular güncellendi.");
-    }
-
-  } catch (error) {
-    console.error("Duyuru kontrolü sırasında kritik hata:", error);
-    await sendTelegramMessage(`
-    ❌ <b>KRİTİK HATA</b>
-    
-    Duyuru kontrolü sırasında beklenmedik bir hata oluştu:
-    <code>${error instanceof Error ? error.message : "Bilinmeyen Hata"}</code>
-    
-    #KritikHata
-    `.trim());
-    throw error;
+  // Her zaman çekilen tüm duyuruları (güncellenen ya da güncellenmeyen) Redis'e kaydet
+  // Bu, ön yüzün her zaman en güncel listeyi göstermesini sağlar.
+  if (currentDuyurular.length > 0) {
+    await redis.set("all_duyurular", currentDuyurular.slice(0, 50));
+    console.log(
+      `[Redis] Tüm duyurular güncel haliyle kaydedildi. Toplam: ${currentDuyurular.length}`
+    );
   }
 }
 
 /**
- * API Route Handler (CRON JOB)
+ * Cron Job için GET endpoint
  */
 export async function GET(request: NextRequest) {
-  // CRON_SECRET kontrolü
   try {
-    const authHeader = request.headers.get("authorization");
-    const expectedAuth = process.env.CRON_SECRET || "default-secret";
+    const authHeader = request.headers.get("Authorization");
+    const expectedAuth = `Bearer ${
+      process.env.CRON_SECRET || "default-secret"
+    }`;
 
-    if (authHeader !== `Bearer ${expectedAuth}`) {
-      return NextResponse.json({ error: "Unauthorized - CRON_SECRET Yanlış" }, { status: 401 });
+    if (authHeader !== expectedAuth) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    console.log("Duyuru kontrolü başlatılıyor (Cron)...");
     await checkForNewDuyurular();
 
     return NextResponse.json({
       success: true,
-      message: "Duyuru kontrolü tamamlandı.",
+      message: "Duyuru kontrolü tamamlandı",
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -301,7 +237,7 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Manuel test için POST endpoint
+ * Manuel test ve sıfırlama için POST endpoint
  */
 export async function POST(request: NextRequest) {
   try {
@@ -309,29 +245,43 @@ export async function POST(request: NextRequest) {
     const { test = false, reset = false } = body;
 
     if (test) {
-      // POST testi için Redis'i sıfırlama seçeneği (Opsiyonel)
+      let statusMessage = "Test tamamlandı.";
+
+      // POST testi için Redis'i sıfırlama seçeneği
       if (redis && reset) {
-           await redis.del("all_duyurular");
-           console.log("Redis verisi sıfırlandı.");
+        await redis.del("all_duyurular");
+        statusMessage = "Redis verisi sıfırlandı ve test başlatıldı.";
+        console.log("Redis verisi sıfırlandı.");
       }
-      
+
       await checkForNewDuyurular();
+
+      const storedDuyurularRaw = await redis?.get<Duyuru[] | null>(
+        "all_duyurular"
+      );
+      const storedDuyurular: Duyuru[] = storedDuyurularRaw || [];
 
       return NextResponse.json({
         success: true,
-        message: "Test tamamlandı",
+        message: statusMessage,
         timestamp: new Date().toISOString(),
+        total_duyuru: storedDuyurular.length,
+        // Bu kısım, ön yüzdeki 'Hata: Duyurular beklenmedik formatta geldi.' hatasını gidermek için eklendi.
+        // Artık çekilen toplam duyuru sayısı gösterilecek.
+        duyurular_success: storedDuyurular.length > 0,
       });
     }
 
     return NextResponse.json({ error: "Geçersiz istek" }, { status: 400 });
   } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Bilinmeyen hata";
     console.error("Test hatası:", error);
     return NextResponse.json(
       {
         success: false,
-        error: "Test sırasında hata oluştu",
-        details: error instanceof Error ? error.message : "Bilinmeyen hata",
+        error: "Test sırasında hata oluştu. Lütfen logları kontrol edin.",
+        details: errorMessage,
       },
       { status: 500 }
     );
