@@ -78,7 +78,10 @@ async function sendTelegramReply(
   message: string
 ): Promise<void> {
   if (!TG_TOKEN) {
-    console.error("Telegram token (TG_TOKEN) eksik. Mesaj gönderilemedi.");
+    // DİKKAT: TG_TOKEN'ın Vercel'de eksik olması durumunda daha net bir hata logu.
+    console.error(
+      "HATA: TG_TOKEN ortam değişkeni eksik. Mesaj gönderilemedi. Lütfen Vercel ortam değişkenlerini kontrol edin."
+    );
     return;
   }
 
