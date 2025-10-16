@@ -3,6 +3,25 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { Redis } from "@upstash/redis";
 
+// Upstash Redis bağlantısı
+let redis: Redis | null = null;
+try {
+  if (
+    process.env.UPSTASH_REDIS_REST_URL &&
+    process.env.UPSTASH_REDIS_REST_TOKEN
+  ) {
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+    console.log("Redis bağlantısı kuruldu");
+  } else {
+    console.log("Redis bilgileri eksik, veri saklama devre dışı");
+  }
+} catch (error) {
+  console.error("Redis bağlantı hatası:", error);
+}
+
 // Telegram bot bilgileri
 const TG_TOKEN = process.env.TG_TOKEN;
 const TG_CHAT_ID = process.env.TG_CHAT_ID;
@@ -18,27 +37,24 @@ interface Duyuru {
 }
 
 /**
- * Redis bağlantısını kontrol eder veya oluşturur (Lokal/Güvenli Bağlantı).
- * Kritik: Redis bağlantısını sadece çağrıldığında kurar (Global bağlantı sorunlarını çözer).
+ * Telegram'a mesaj gönder
  */
-function getRedisClient(): Redis | null {
-  if (
-    process.env.UPSTASH_REDIS_REST_URL &&
-    process.env.UPSTASH_REDIS_REST_TOKEN
-  ) {
-    try {
-      return new Redis({
-        url: process.env.UPSTASH_REDIS_REST_URL,
-        token: process.env.UPSTASH_REDIS_REST_TOKEN,
-      });
-    } catch (error) {
-      console.error("Redis bağlantı hatası:", error);
-      return null;
-    }
-  } else {
-    // Bu uyarı, ortam değişkenleri Vercel'de ayarlanmadığında görünür.
-    console.warn("Redis bilgileri eksik, veri saklama devre dışı.");
-    return null;
+async function sendTelegramMessage(message: string): Promise<void> {
+  if (!TG_TOKEN || !TG_CHAT_ID) {
+    console.error("Telegram bot bilgileri eksik. Bildirim gönderilemiyor.");
+    return;
+  }
+
+  const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+
+  try {
+    await axios.post(url, {
+      chat_id: TG_CHAT_ID,
+      text: message,
+      parse_mode: "HTML",
+    });
+  } catch (error) {
+    console.error("Telegram mesajı gönderme hatası:", error);
   }
 }
 
@@ -55,37 +71,46 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Ankara Adliyesi arşiv sayfasından duyuruları çeker ve zaman aşımı durumunda yeniden dener.
- * Kritik: Bağlantı hatalarını (ETIMEDOUT) çözer.
+ * KRİTİK GÜNCELLEME: Seçiciler daha esnek hale getirildi.
  */
 async function fetchDuyurular(): Promise<Duyuru[]> {
   const selector = "div.media";
-  const MAX_RETRIES = 3; // Maksimum 3 deneme
+  const MAX_RETRIES = 3;
   const baseUrl = "https://ankara.adalet.gov.tr";
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      console.log(`[Scraper] Duyuru çekme denemesi: ${attempt}/${MAX_RETRIES}`);
+      console.log(
+        `[Duyuru Kontrolü] Duyuru çekme denemesi: ${attempt}/${MAX_RETRIES}`
+      );
 
       const response = await axios.get(DUYURULAR_URL, {
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
           Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-          "Accept-Language": "tr-TR,tr;q=0.8,en-US;q.5,en;q.3",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q.8",
+          "Accept-Language": "tr-TR,tr;q.8,en-US;q.5,en;q.3",
         },
-        timeout: 10000, // 10 saniye zaman aşımı
+        timeout: 10000,
       });
 
       const $ = cheerio.load(response.data);
       const duyurular: Duyuru[] = [];
 
       $(selector).each((i, element) => {
-        const titleElement = $(element).find(".media-body h4 a");
+        // Başlık ve linki bulmak için daha esnek seçiciler kullanıldı (h4 a, a[href])
+        const titleElement = $(element)
+          .find(".media-body h4 a, .media-body a[href]")
+          .first();
         const title = titleElement.text().trim();
         let link = titleElement.attr("href") || "";
 
-        const date = $(element).find(".media-body .date").text().trim();
+        // Tarih bilgisini bulmak için daha fazla varyasyon denendi (.date, p.date, small)
+        const dateElement = $(element)
+          .find(".media-body .date, .media-body p.date, .media-body small")
+          .first();
+        const date = dateElement.text().trim();
 
         if (link && !isAbsoluteUrl(link)) {
           link = baseUrl + link;
@@ -104,22 +129,21 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
       });
 
       console.log(
-        `[Scraper] Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length} (Deneme: ${attempt})`
+        `[Duyuru Kontrolü] Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length} (Deneme: ${attempt})`
       );
 
       if (duyurular.length === 0) {
-        // Duyuru çekme başarılı olduysa ama sonuç 0 ise, bu bir sorun
+        // Duyuru bulunamadıysa, web sitesi yapısı değişmiş demektir.
         throw new Error(
-          `Duyuru çekme başarısız oldu (Toplam 0). Seçiciyi kontrol edin: ${selector}`
+          `Duyuru bulunamadı (Toplam 0). Web sitesi yapısı veya seçici "${selector}" değişmiş olabilir.`
         );
       }
 
-      return duyurular; // Başarılı, döngüyü sonlandır.
+      return duyurular;
     } catch (error: unknown) {
       if (attempt === MAX_RETRIES) {
-        // Tüm denemeler başarısız olduysa, hatayı yukarı fırlat.
         console.error(
-          `[Scraper Hata] Tüm ${MAX_RETRIES} deneme başarısız oldu:`,
+          `[Duyuru Kontrolü Hata] Tüm ${MAX_RETRIES} deneme başarısız oldu:`,
           error
         );
         throw new Error(
@@ -129,10 +153,9 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
         );
       }
 
-      // Üstel geri çekilme ile bekleme (2s, 4s, 8s...)
       const delayTime = Math.pow(2, attempt) * 1000;
       console.log(
-        `[Scraper] Bağlantı hatası (${
+        `[Duyuru Kontrolü] Bağlantı hatası (${
           error instanceof Error
             ? error.message.split("\n")[0]
             : "Bilinmeyen Hata"
@@ -141,146 +164,81 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
       await delay(delayTime);
     }
   }
-  // Bu satıra ulaşılmamalıdır, ancak TypeScript için eklendi.
   throw new Error("Duyuru çekme döngüsü tamamlanamadı.");
 }
 
 /**
- * Telegram'a mesaj gönder
+ * Yeni duyuruları kontrol eder ve Redis'i günceller.
  */
-async function sendTelegramMessage(message: string): Promise<void> {
-  if (!TG_TOKEN || !TG_CHAT_ID) {
-    console.error("Telegram bot bilgileri eksik. Bildirim gönderilemedi.");
+async function checkForNewDuyurular(): Promise<void> {
+  if (!redis) {
+    console.error("Redis bağlantısı yok. Kontrol yapılamıyor.");
     return;
   }
 
-  const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+  const newDuyurular = await fetchDuyurular();
 
-  try {
-    await axios.post(url, {
-      chat_id: TG_CHAT_ID,
-      text: message,
-      parse_mode: "HTML",
-    });
-  } catch (error) {
-    console.error("Telegram mesajı gönderme hatası:", error);
-  }
-}
+  const storedDuyurularJson = await redis.get("all_duyurular");
+  const storedDuyurular: Duyuru[] = storedDuyurularJson
+    ? JSON.parse(storedDuyurularJson as string)
+    : [];
 
-/**
- * Yeni duyurular için Telegram mesajı oluşturur
- */
-function formatNewDuyuruMessage(duyuru: Duyuru): string {
-  return (
-    `✨ <b>YENİ DUYURU!</b>\n\n` +
-    `Başlık: <b>${duyuru.title}</b>\n` +
-    `Tarih: 📅 ${duyuru.date}\n` +
-    `Bağlantı: 🔗 <a href="${duyuru.link}">Görüntüle</a>\n\n` +
-    `#AnkaraAdliye #YeniDuyuru`
+  const oldDuyuruIds = new Set(storedDuyurular.map((d) => d.id));
+  const newUnseenDuyurular = newDuyurular.filter(
+    (d) => !oldDuyuruIds.has(d.id)
   );
-}
 
-/**
- * Web sitesini kontrol eder, yeni duyuruları bulur ve Redis'e kaydeder.
- * Yeni duyuru varsa Telegram'a bildirim gönderir.
- */
-async function checkForNewDuyurular() {
-  const redis = getRedisClient(); // API çağrısı sırasında Redis'i kontrol et
-
-  // Redis bağlantısı yoksa sadece logla ve devam et, botun çalışmasını durdurma.
-  if (!redis) {
-    console.warn("Redis bağlantısı yok, kontrol atlanıyor.");
-  }
-
-  // 1. Web sitesinden güncel duyuruları çek
-  const currentDuyurular = await fetchDuyurular();
-
-  // 2. Redis'ten kaydedilmiş duyuruları çek (Redis varsa)
-  let storedDuyurular: Duyuru[] = [];
-  if (redis) {
-    // Redis'ten veri çekilirken hata olursa boş dizi kullan
-    try {
-      const storedDuyurularRaw = await redis.get<Duyuru[] | null>(
-        "all_duyurular"
-      );
-      storedDuyurular = (
-        Array.isArray(storedDuyurularRaw) ? storedDuyurularRaw : []
-      ) as Duyuru[];
-    } catch (e) {
-      console.error("Redis'ten veri çekme hatası. Boş dizi kullanılıyor.", e);
-      storedDuyurular = [];
-    }
-  }
-
-  // 3. Karşılaştırma için ID listesi oluştur
-  const storedIds = new Set(storedDuyurular.map((d) => d.id));
-
-  const newDuyurular: Duyuru[] = [];
-
-  // 4. Yeni duyuruları bul
-  for (const duyuru of currentDuyurular) {
-    if (!storedIds.has(duyuru.id)) {
-      newDuyurular.push(duyuru);
-    }
-  }
-
-  // 5. Yeni duyurular varsa bildirim gönder ve Redis'i güncelle
-  if (newDuyurular.length > 0) {
-    console.log(`🚨 ${newDuyurular.length} yeni duyuru bulundu!`);
-
-    // Yeni duyuruları Telegram'a gönder (İlk 3'ü gönderiyoruz)
-    for (const duyuru of newDuyurular.slice(0, 3)) {
-      await sendTelegramMessage(formatNewDuyuruMessage(duyuru));
-    }
-
-    // Redis varsa güncelle
-    if (redis) {
-      const updatedDuyurular = [...newDuyurular, ...storedDuyurular].slice(
-        0,
-        50
-      ); // En fazla 50 duyuru tut
-      await redis.set("all_duyurular", updatedDuyurular);
-      console.log("Redis duyuruları güncellendi ve bildirimler gönderildi.");
-    }
-  } else {
-    console.log("✅ Yeni duyuru bulunamadı.");
-  }
-
-  // Her zaman çekilen tüm duyuruları (güncellenen ya da güncellenmeyen) Redis'e kaydet (Redis varsa)
-  if (currentDuyurular.length > 0 && redis) {
-    // Mevcut duyuruları kaydederken, eğer storedDuyurular null gelirse üzerine yazarız.
-    await redis.set("all_duyurular", currentDuyurular.slice(0, 50));
+  if (newUnseenDuyurular.length > 0) {
     console.log(
-      `[Redis] Tüm duyurular güncel haliyle kaydedildi. Toplam: ${currentDuyurular.length}`
+      `${newUnseenDuyurular.length} yeni duyuru bulundu! Bildirim gönderiliyor.`
     );
+
+    const latestDuyuru = newUnseenDuyurular[0];
+    const message = `🔔 <b>YENİ DUYURU!</b>\n\n<b>${latestDuyuru.title}</b>\n📅 ${latestDuyuru.date}\n🔗 <a href="${latestDuyuru.link}">Duyuruyu Görüntüle</a>\n\n#AnkaraAdliye #YeniDuyuru`;
+
+    await sendTelegramMessage(message);
+
+    // Yeni duyuruları en üste ekle
+    const updatedDuyurular = [
+      ...newDuyurular,
+      ...storedDuyurular.filter(
+        (d) => !newDuyurular.some((n) => n.id === d.id)
+      ),
+    ];
+    await redis.set("all_duyurular", JSON.stringify(updatedDuyurular));
+  } else {
+    console.log("Yeni duyuru bulunamadı. Veri seti güncelleniyor.");
+    // Sadece mevcut duyuruları Redis'e kaydet (Eski duyuruların silinmesini önler)
+    await redis.set("all_duyurular", JSON.stringify(newDuyurular));
   }
 }
 
 /**
- * Cron Job için GET endpoint
+ * Cron job tarafından çağrılan endpoint (GET)
  */
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get("Authorization");
-    const expectedAuth = process.env.CRON_SECRET || "default-secret";
+    const secret =
+      request.headers.get("Authorization")?.split(" ")[1] ||
+      request.nextUrl.searchParams.get("secret");
 
-    if (authHeader !== `Bearer ${expectedAuth}`) {
+    if (secret !== process.env.CRON_SECRET) {
       return NextResponse.json(
-        { error: "Unauthorized / CRON_SECRET Yanlış" },
+        { error: "CRON_SECRET Yanlış" },
         { status: 401 }
       );
     }
 
-    console.log("Duyuru kontrolü başlatılıyor (Cron)...");
     await checkForNewDuyurular();
 
     return NextResponse.json({
       success: true,
-      message: "Duyuru kontrolü tamamlandı",
+      message: "Duyuru kontrolü tamamlandı.",
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("API hatası:", error);
+    console.error("API hatası (GET):", error);
+    // Hata durumunda bile her zaman JSON döndürerek JSON parse hatasını engelle
     return NextResponse.json(
       {
         success: false,
@@ -299,48 +257,44 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { test = false, reset = false } = body;
-    const redis = getRedisClient(); // Bağlantıyı burada al
 
     if (test) {
-      let statusMessage = "Test tamamlandı.";
-
       // POST testi için Redis'i sıfırlama seçeneği
       if (redis && reset) {
         await redis.del("all_duyurular");
-        statusMessage = "Redis verisi sıfırlandı ve test başlatıldı.";
         console.log("Redis verisi sıfırlandı.");
       }
 
-      // Duyuruları kontrol et ve kaydet
       await checkForNewDuyurular();
-
-      const storedDuyurularRaw = await redis?.get<Duyuru[] | null>(
-        "all_duyurular"
-      );
-      const storedDuyurular: Duyuru[] = Array.isArray(storedDuyurularRaw)
-        ? storedDuyurularRaw
-        : [];
 
       return NextResponse.json({
         success: true,
-        message: statusMessage,
+        message: reset
+          ? "Redis sıfırlandı ve test tamamlandı."
+          : "Test tamamlandı",
         timestamp: new Date().toISOString(),
-        total_duyuru: storedDuyurular.length,
-        // Ön yüzdeki hatayı gidermek için: Eğer 0'dan büyükse başarılı kabul et.
-        duyurular_success: storedDuyurular.length > 0,
+      });
+    }
+
+    // Verileri Sıfırla (Redis) butonu için sadece sıfırlama işlemi
+    if (reset && redis) {
+      await redis.del("all_duyurular");
+      return NextResponse.json({
+        success: true,
+        message: "Redis verileri başarıyla sıfırlandı.",
+        timestamp: new Date().toISOString(),
       });
     }
 
     return NextResponse.json({ error: "Geçersiz istek" }, { status: 400 });
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Bilinmeyen hata";
-    console.error("Test hatası (Üst Seviye):", error);
+    console.error("Test/Sıfırlama hatası (POST):", error);
+    // Hata durumunda bile her zaman JSON döndürerek JSON parse hatasını engelle
     return NextResponse.json(
       {
         success: false,
-        error: "Test sırasında hata oluştu. Lütfen logları kontrol edin.",
-        details: errorMessage,
+        error: "Test veya Sıfırlama sırasında hata oluştu",
+        details: error instanceof Error ? error.message : "Bilinmeyen hata",
       },
       { status: 500 }
     );

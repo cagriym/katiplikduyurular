@@ -58,6 +58,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * Kritik: Bağlantı hatalarını (ETIMEDOUT) çözer.
  */
 async function fetchDuyurular(): Promise<Duyuru[]> {
+  // Seçiciyi daha esnek hale getirdik, ancak ana kapsayıcı hala "div.media"
   const selector = "div.media";
   const MAX_RETRIES = 3; // Maksimum 3 deneme
   const baseUrl = "https://ankara.adalet.gov.tr";
@@ -83,11 +84,18 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
       const duyurular: Duyuru[] = [];
 
       $(selector).each((i, element) => {
-        const titleElement = $(element).find(".media-body h4 a");
+        // Başlık ve linki bulmak için daha esnek seçiciler kullanıldı (h4 a, a[href])
+        const titleElement = $(element)
+          .find(".media-body h4 a, .media-body a[href]")
+          .first();
         const title = titleElement.text().trim();
         let link = titleElement.attr("href") || "";
 
-        const date = $(element).find(".media-body .date").text().trim();
+        // Tarih bilgisini bulmak için daha fazla varyasyon denendi (.date, p.date, small)
+        const dateElement = $(element)
+          .find(".media-body .date, .media-body p.date, .media-body small")
+          .first();
+        const date = dateElement.text().trim();
 
         if (link && !isAbsoluteUrl(link)) {
           link = baseUrl + link;
@@ -110,9 +118,10 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
       );
 
       if (duyurular.length === 0) {
-        // Duyuru çekme başarılı olduysa ama sonuç 0 ise, seçiciyi kontrol etmemiz gerekir.
+        // Duyuru çekme başarılı olduysa ama sonuç 0 ise, seçici veya web sitesi yapısı değişmiştir.
+        // Bu hata, kullanıcının gördüğü "Toplam: 0" durumunu açıklar.
         throw new Error(
-          `Duyuru çekme başarısız oldu (Toplam 0). Seçiciyi kontrol edin: ${selector}`
+          `Duyuru bulunamadı (Toplam 0). Web sitesi yapısı veya seçici "${selector}" değişmiş olabilir.`
         );
       }
 
