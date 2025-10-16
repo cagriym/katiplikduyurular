@@ -41,8 +41,9 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
     const baseUrl = "https://ankara.adalet.gov.tr";
 
     // GÜNCELLENMİŞ MANTIK: Duyuru listesini çekme
-    // .media-list li yerine daha genel bir seçici kullanıldı
-    $("div.col-md-9 div.media").each((i, element) => {
+    // Paylaştığınız HTML yapısına göre en genel ve doğru seçici olan "div.media" kullanıldı.
+    $("div.media").each((i, element) => {
+      // titleElement, element'in (div.media) içindeki media-body'yi hedef alıyor
       const titleElement = $(element).find(".media-body h4 a");
       const title = titleElement.text().trim();
       let link = titleElement.attr("href") || "";
@@ -116,7 +117,8 @@ async function sendTelegramReply(
  */
 function formatDuyuruList(duyurular: Duyuru[]): string {
   if (duyurular.length === 0) {
-    return "📋 <b>Henüz güncel duyuru bulunamadı.</b> (Web sitesi yapısı değişmiş veya geçici bir hata olabilir.)"; // Hata durumunda daha açıklayıcı mesaj
+    // Duyuru çekilemezse daha net bir hata mesajı
+    return "📋 <b>Henüz güncel duyuru bulunamadı.</b> (Web sitesi yapısı tekrar değişmiş olabilir, lütfen Vercel loglarını kontrol edin.)";
   }
 
   let message = "📋 <b>Son 3 Duyuru</b>\n\n";
