@@ -3,28 +3,6 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { Redis } from "@upstash/redis";
 
-// Upstash Redis bağlantısı
-let redis: Redis | null = null;
-try {
-  if (
-    process.env.UPSTASH_REDIS_REST_URL &&
-    process.env.UPSTASH_REDIS_REST_TOKEN
-  ) {
-    redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN,
-    });
-    console.log("Redis bağlantısı kuruldu");
-  } else {
-    // Redis ortam değişkenlerinin eksik olduğu uyarısı
-    console.warn(
-      "Redis bilgileri eksik, veri saklama devre dışı. Lütfen UPSTASH_REDIS_REST_URL ve TOKEN değişkenlerini kontrol edin."
-    );
-  }
-} catch (error) {
-  console.error("Redis bağlantı hatası:", error);
-}
-
 // Telegram bot bilgileri
 const TG_TOKEN = process.env.TG_TOKEN;
 const TG_CHAT_ID = process.env.TG_CHAT_ID;
@@ -40,72 +18,132 @@ interface Duyuru {
 }
 
 /**
+ * Redis bağlantısını kontrol eder veya oluşturur.
+ * Bağlantıyı sadece çağrıldığında kurar, bu sayede derleme anındaki hataları önler.
+ */
+function getRedisClient(): Redis | null {
+  if (
+    process.env.UPSTASH_REDIS_REST_URL &&
+    process.env.UPSTASH_REDIS_REST_TOKEN
+  ) {
+    try {
+      return new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN,
+      });
+    } catch (error) {
+      console.error("Redis bağlantı hatası:", error);
+      return null;
+    }
+  } else {
+    // Bu uyarı, ortam değişkenleri Vercel'de ayarlanmadığında görünür.
+    console.warn(
+      "Redis bilgileri eksik, veri saklama devre dışı. Lütfen UPSTASH_REDIS_REST_URL ve TOKEN değişkenlerini kontrol edin."
+    );
+    return null;
+  }
+}
+
+/**
  * Linkin tam bir URL olup olmadığını kontrol eder.
  * @param url Kontrol edilecek link
  */
 const isAbsoluteUrl = (url: string) => /^(?:[a-z]+:)?\/\//i.test(url);
 
 /**
- * Ankara Adliyesi arşiv sayfasından duyuruları çek
+ * Belirtilen süre kadar bekler.
+ */
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Ankara Adliyesi arşiv sayfasından duyuruları çeker ve zaman aşımı durumunda yeniden dener.
  */
 async function fetchDuyurular(): Promise<Duyuru[]> {
   const selector = "div.media";
-  try {
-    const response = await axios.get(DUYURULAR_URL, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "tr-TR,tr;q=0.8,en-US;q.5,en;q.3",
-      },
-    });
-    const $ = cheerio.load(response.data);
-    const duyurular: Duyuru[] = [];
-    const baseUrl = "https://ankara.adalet.gov.tr";
+  const MAX_RETRIES = 3; // Maksimum 3 deneme
+  const baseUrl = "https://ankara.adalet.gov.tr";
 
-    $(selector).each((i, element) => {
-      const titleElement = $(element).find(".media-body h4 a");
-      const title = titleElement.text().trim();
-      let link = titleElement.attr("href") || "";
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      console.log(`[Scraper] Duyuru çekme denemesi: ${attempt}/${MAX_RETRIES}`);
 
-      const date = $(element).find(".media-body .date").text().trim();
+      const response = await axios.get(DUYURULAR_URL, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "tr-TR,tr;q=0.8,en-US;q.5,en;q.3",
+        },
+        timeout: 10000, // 10 saniye zaman aşımı ekleyelim
+      });
 
-      if (link && !isAbsoluteUrl(link)) {
-        link = baseUrl + link;
-      }
+      const $ = cheerio.load(response.data);
+      const duyurular: Duyuru[] = [];
 
-      if (title && link) {
-        const cleanTitle = title.replace(/\s\s+/g, " ").trim();
+      $(selector).each((i, element) => {
+        const titleElement = $(element).find(".media-body h4 a");
+        const title = titleElement.text().trim();
+        let link = titleElement.attr("href") || "";
 
-        duyurular.push({
-          title: cleanTitle,
-          link: link,
-          date: date || "Tarih Yok",
-          id: link.split("/").pop() || i.toString(),
-        });
-      }
-    });
+        const date = $(element).find(".media-body .date").text().trim();
 
-    console.log(
-      `[Scraper] Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length} (Seçici: ${selector})`
-    );
+        if (link && !isAbsoluteUrl(link)) {
+          link = baseUrl + link;
+        }
 
-    if (duyurular.length === 0) {
-      throw new Error(
-        `Duyuru çekme başarısız oldu (Toplam 0). Seçiciyi kontrol edin: ${selector}`
+        if (title && link) {
+          const cleanTitle = title.replace(/\s\s+/g, " ").trim();
+
+          duyurular.push({
+            title: cleanTitle,
+            link: link,
+            date: date || "Tarih Yok",
+            id: link.split("/").pop() || i.toString(),
+          });
+        }
+      });
+
+      console.log(
+        `[Scraper] Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length} (Deneme: ${attempt})`
       );
-    }
 
-    return duyurular;
-  } catch (error: unknown) {
-    console.error("[Scraper Hata] Duyuru çekme hatası:", error);
-    throw new Error(
-      `Duyuru çekme sırasında hata oluştu: ${
-        error instanceof Error ? error.message : "Bilinmeyen Hata"
-      }`
-    );
+      if (duyurular.length === 0) {
+        // Duyuru çekme başarılı olduysa ama sonuç 0 ise, bu bir sorun
+        throw new Error(
+          `Duyuru çekme başarısız oldu (Toplam 0). Seçiciyi kontrol edin: ${selector}`
+        );
+      }
+
+      return duyurular; // Başarılı, döngüyü sonlandır.
+    } catch (error: unknown) {
+      if (attempt === MAX_RETRIES) {
+        // Tüm denemeler başarısız olduysa, hatayı yukarı fırlat.
+        console.error(
+          `[Scraper Hata] Tüm ${MAX_RETRIES} deneme başarısız oldu:`,
+          error
+        );
+        throw new Error(
+          `Duyuru çekme sırasında hata oluştu: ${
+            error instanceof Error ? error.message : "Bilinmeyen Hata"
+          }`
+        );
+      }
+
+      // Üstel geri çekilme ile bekleme (2s, 4s, 8s...)
+      const delayTime = Math.pow(2, attempt) * 1000;
+      console.log(
+        `[Scraper] Bağlantı hatası (${
+          error instanceof Error
+            ? error.message.split("\n")[0]
+            : "Bilinmeyen Hata"
+        }), ${delayTime / 1000} saniye sonra tekrar deneniyor...`
+      );
+      await delay(delayTime);
+    }
   }
+  // Bu satıra ulaşılmamalıdır, ancak TypeScript için eklendi.
+  throw new Error("Duyuru çekme döngüsü tamamlanamadı.");
 }
 
 /**
@@ -148,6 +186,8 @@ function formatNewDuyuruMessage(duyuru: Duyuru): string {
  * Yeni duyuru varsa Telegram'a bildirim gönderir.
  */
 async function checkForNewDuyurular() {
+  const redis = getRedisClient(); // API çağrısı sırasında Redis'i kontrol et
+
   if (!redis) {
     console.warn("Redis bağlantısı yok, kontrol atlanıyor.");
     return;
@@ -158,8 +198,10 @@ async function checkForNewDuyurular() {
 
   // 2. Redis'ten kaydedilmiş duyuruları çek
   const storedDuyurularRaw = await redis.get<Duyuru[] | null>("all_duyurular");
-  // HATA DÜZELTME: Duyurular yerine Duyuru[] kullanıldı
-  const storedDuyurular: Duyuru[] = storedDuyurularRaw || [];
+  // Eğer storedDuyurularRaw bir JSON dizisi değilse (örneğin null ise), boş bir diziye çevir.
+  const storedDuyurular: Duyuru[] = (
+    Array.isArray(storedDuyurularRaw) ? storedDuyurularRaw : []
+  ) as Duyuru[];
 
   // 3. Karşılaştırma için ID listesi oluştur
   const storedIds = new Set(storedDuyurular.map((d) => d.id));
@@ -192,6 +234,7 @@ async function checkForNewDuyurular() {
 
   // Her zaman çekilen tüm duyuruları (güncellenen ya da güncellenmeyen) Redis'e kaydet
   if (currentDuyurular.length > 0) {
+    // Mevcut duyuruları kaydederken, eğer storedDuyurular null gelirse üzerine yazarız.
     await redis.set("all_duyurular", currentDuyurular.slice(0, 50));
     console.log(
       `[Redis] Tüm duyurular güncel haliyle kaydedildi. Toplam: ${currentDuyurular.length}`
@@ -242,6 +285,7 @@ export async function POST(request: NextRequest) {
 
     if (test) {
       let statusMessage = "Test tamamlandı.";
+      const redis = getRedisClient(); // API çağrısı sırasında Redis'i kontrol et
 
       // POST testi için Redis'i sıfırlama seçeneği
       if (redis && reset) {
@@ -256,7 +300,9 @@ export async function POST(request: NextRequest) {
       const storedDuyurularRaw = await redis?.get<Duyuru[] | null>(
         "all_duyurular"
       );
-      const storedDuyurular: Duyuru[] = storedDuyurularRaw || [];
+      const storedDuyurular: Duyuru[] = Array.isArray(storedDuyurularRaw)
+        ? storedDuyurularRaw
+        : [];
 
       return NextResponse.json({
         success: true,
