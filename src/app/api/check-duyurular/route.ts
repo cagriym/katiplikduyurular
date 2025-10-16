@@ -18,8 +18,8 @@ interface Duyuru {
 }
 
 /**
- * Redis bağlantısını kontrol eder veya oluşturur.
- * Bağlantıyı sadece çağrıldığında kurar, bu sayede derleme anındaki hataları önler.
+ * Redis bağlantısını kontrol eder veya oluşturur (Lokal/Güvenli Bağlantı).
+ * Kritik: Redis bağlantısını sadece çağrıldığında kurar (Global bağlantı sorunlarını çözer).
  */
 function getRedisClient(): Redis | null {
   if (
@@ -37,9 +37,7 @@ function getRedisClient(): Redis | null {
     }
   } else {
     // Bu uyarı, ortam değişkenleri Vercel'de ayarlanmadığında görünür.
-    console.warn(
-      "Redis bilgileri eksik, veri saklama devre dışı. Lütfen UPSTASH_REDIS_REST_URL ve TOKEN değişkenlerini kontrol edin."
-    );
+    console.warn("Redis bilgileri eksik, veri saklama devre dışı.");
     return null;
   }
 }
@@ -57,6 +55,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Ankara Adliyesi arşiv sayfasından duyuruları çeker ve zaman aşımı durumunda yeniden dener.
+ * Kritik: Bağlantı hatalarını (ETIMEDOUT) çözer.
  */
 async function fetchDuyurular(): Promise<Duyuru[]> {
   const selector = "div.media";
@@ -75,7 +74,7 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
           "Accept-Language": "tr-TR,tr;q=0.8,en-US;q.5,en;q.3",
         },
-        timeout: 10000, // 10 saniye zaman aşımı ekleyelim
+        timeout: 10000, // 10 saniye zaman aşımı
       });
 
       const $ = cheerio.load(response.data);
@@ -188,20 +187,30 @@ function formatNewDuyuruMessage(duyuru: Duyuru): string {
 async function checkForNewDuyurular() {
   const redis = getRedisClient(); // API çağrısı sırasında Redis'i kontrol et
 
+  // Redis bağlantısı yoksa sadece logla ve devam et, botun çalışmasını durdurma.
   if (!redis) {
     console.warn("Redis bağlantısı yok, kontrol atlanıyor.");
-    return;
   }
 
   // 1. Web sitesinden güncel duyuruları çek
   const currentDuyurular = await fetchDuyurular();
 
-  // 2. Redis'ten kaydedilmiş duyuruları çek
-  const storedDuyurularRaw = await redis.get<Duyuru[] | null>("all_duyurular");
-  // Eğer storedDuyurularRaw bir JSON dizisi değilse (örneğin null ise), boş bir diziye çevir.
-  const storedDuyurular: Duyuru[] = (
-    Array.isArray(storedDuyurularRaw) ? storedDuyurularRaw : []
-  ) as Duyuru[];
+  // 2. Redis'ten kaydedilmiş duyuruları çek (Redis varsa)
+  let storedDuyurular: Duyuru[] = [];
+  if (redis) {
+    // Redis'ten veri çekilirken hata olursa boş dizi kullan
+    try {
+      const storedDuyurularRaw = await redis.get<Duyuru[] | null>(
+        "all_duyurular"
+      );
+      storedDuyurular = (
+        Array.isArray(storedDuyurularRaw) ? storedDuyurularRaw : []
+      ) as Duyuru[];
+    } catch (e) {
+      console.error("Redis'ten veri çekme hatası. Boş dizi kullanılıyor.", e);
+      storedDuyurular = [];
+    }
+  }
 
   // 3. Karşılaştırma için ID listesi oluştur
   const storedIds = new Set(storedDuyurular.map((d) => d.id));
@@ -224,16 +233,21 @@ async function checkForNewDuyurular() {
       await sendTelegramMessage(formatNewDuyuruMessage(duyuru));
     }
 
-    // Yeni duyuruları en üste ekleyerek Redis'i güncelle
-    const updatedDuyurular = [...newDuyurular, ...storedDuyurular].slice(0, 50); // En fazla 50 duyuru tut
-    await redis.set("all_duyurular", updatedDuyurular);
-    console.log("Redis duyuruları güncellendi ve bildirimler gönderildi.");
+    // Redis varsa güncelle
+    if (redis) {
+      const updatedDuyurular = [...newDuyurular, ...storedDuyurular].slice(
+        0,
+        50
+      ); // En fazla 50 duyuru tut
+      await redis.set("all_duyurular", updatedDuyurular);
+      console.log("Redis duyuruları güncellendi ve bildirimler gönderildi.");
+    }
   } else {
     console.log("✅ Yeni duyuru bulunamadı.");
   }
 
-  // Her zaman çekilen tüm duyuruları (güncellenen ya da güncellenmeyen) Redis'e kaydet
-  if (currentDuyurular.length > 0) {
+  // Her zaman çekilen tüm duyuruları (güncellenen ya da güncellenmeyen) Redis'e kaydet (Redis varsa)
+  if (currentDuyurular.length > 0 && redis) {
     // Mevcut duyuruları kaydederken, eğer storedDuyurular null gelirse üzerine yazarız.
     await redis.set("all_duyurular", currentDuyurular.slice(0, 50));
     console.log(
@@ -251,7 +265,10 @@ export async function GET(request: NextRequest) {
     const expectedAuth = process.env.CRON_SECRET || "default-secret";
 
     if (authHeader !== `Bearer ${expectedAuth}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized / CRON_SECRET Yanlış" },
+        { status: 401 }
+      );
     }
 
     console.log("Duyuru kontrolü başlatılıyor (Cron)...");
@@ -282,10 +299,10 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { test = false, reset = false } = body;
+    const redis = getRedisClient(); // Bağlantıyı burada al
 
     if (test) {
       let statusMessage = "Test tamamlandı.";
-      const redis = getRedisClient(); // API çağrısı sırasında Redis'i kontrol et
 
       // POST testi için Redis'i sıfırlama seçeneği
       if (redis && reset) {
