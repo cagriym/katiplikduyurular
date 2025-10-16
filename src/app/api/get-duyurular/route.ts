@@ -10,61 +10,74 @@ interface Duyuru {
   id: string;
 }
 
-/**
- * Redis bağlantısını kontrol eder veya oluşturur (Lokal/Güvenli Bağlantı).
- */
-function getRedisClient(): Redis | null {
+let redis: Redis | null = null;
+try {
   if (
     process.env.UPSTASH_REDIS_REST_URL &&
     process.env.UPSTASH_REDIS_REST_TOKEN
   ) {
-    try {
-      return new Redis({
-        url: process.env.UPSTASH_REDIS_REST_URL,
-        token: process.env.UPSTASH_REDIS_REST_TOKEN,
-      });
-    } catch (error) {
-      console.error("Redis bağlantı hatası:", error);
-      return null;
-    }
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
   } else {
-    // Bu uyarı, ortam değişkenleri Vercel'de ayarlanmadığında görünür.
     console.warn("Redis bağlantı bilgileri eksik. Veri çekilemiyor.");
-    return null;
   }
+} catch (error) {
+  console.error("Redis bağlantı hatası:", error);
 }
 
 /**
  * GET endpoint - Ön yüz (Frontend) için duyuruları Redis'ten çeker.
  */
 export async function GET() {
-  const redis = getRedisClient(); // Bağlantıyı burada al
-
   try {
-    if (!redis) {
-      // Redis bağlantısı yoksa boş liste dön
-      return NextResponse.json({ duyurular: [] }, { status: 200 });
-    }
-
-    const storedDuyurular = await redis.get<Duyuru[] | null>("all_duyurular");
-
     let duyurular: Duyuru[] = [];
-    if (storedDuyurular && Array.isArray(storedDuyurular)) {
-      duyurular = storedDuyurular;
+    let statusMessage = "Duyurular başarıyla yüklendi.";
+    let lastCheck = null;
+
+    if (!redis) {
+      statusMessage =
+        "Redis bağlantısı yok. Duyurular geçici olarak kullanılamıyor.";
+      return NextResponse.json(
+        { duyurular: [], statusMessage, total: 0, lastCheck: null },
+        { status: 200 }
+      );
     }
 
-    // Frontend'e temiz bir yanıt gönder
+    const storedDuyurular = await redis.get("all_duyurular");
+    lastCheck = (await redis.get("last_check_timestamp")) as string | null;
+
+    if (storedDuyurular) {
+      duyurular = JSON.parse(storedDuyurular as string);
+    }
+
+    if (duyurular.length === 0) {
+      statusMessage =
+        "Redis'te henüz duyuru bulunamadı. Lütfen 'Duyuruları Yenile' butonuna tıklayarak ilk kontrolü başlatın.";
+    }
+
     return NextResponse.json(
       {
-        duyurular: duyurular,
-        last_updated: new Date().toISOString(), // İsteğe bağlı, son güncelleme zamanı
+        duyurular,
+        statusMessage,
+        total: duyurular.length,
+        lastCheck: lastCheck || "Bilinmiyor",
       },
       { status: 200 }
     );
   } catch (error) {
-    console.error("Redis veya GET hatası:", error);
-
-    // Hata durumunda bile frontend'in beklediği formatta (boş dizi) yanıt dönülür.
-    return NextResponse.json({ duyurular: [] }, { status: 200 });
+    console.error("Duyuru çekme API hatası:", error);
+    // Hata durumunda bile JSON dönmeli
+    return NextResponse.json(
+      {
+        duyurular: [],
+        statusMessage:
+          "Hata: Sunucu tarafında veri çekilirken bir sorun oluştu.",
+        total: 0,
+        lastCheck: null,
+      },
+      { status: 500 }
+    );
   }
 }
