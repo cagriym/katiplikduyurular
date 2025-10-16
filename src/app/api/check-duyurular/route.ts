@@ -205,11 +205,21 @@ async function checkForNewDuyurular(): Promise<void> {
         (d) => !newDuyurular.some((n) => n.id === d.id)
       ),
     ];
-    await redis.set("all_duyurular", JSON.stringify(updatedDuyurular));
+    try {
+      await redis.set("all_duyurular", JSON.stringify(updatedDuyurular));
+    } catch (error) {
+      console.error("Redis'e duyuru yazma hatası:", error);
+      throw new Error("Redis'e duyuru yazılamadı.");
+    }
   } else {
     console.log("Yeni duyuru bulunamadı. Veri seti güncelleniyor.");
     // Sadece mevcut duyuruları Redis'e kaydet (Eski duyuruların silinmesini önler)
-    await redis.set("all_duyurular", JSON.stringify(newDuyurular));
+    try {
+      await redis.set("all_duyurular", JSON.stringify(newDuyurular));
+    } catch (error) {
+      console.error("Redis'e duyuru yazma hatası:", error);
+      throw new Error("Redis'e duyuru yazılamadı.");
+    }
   }
 }
 
@@ -276,24 +286,119 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Verileri Sıfırla (Redis) butonu için sadece sıfırlama işlemi
-    if (reset && redis) {
-      await redis.del("all_duyurular");
-      return NextResponse.json({
-        success: true,
-        message: "Redis verileri başarıyla sıfırlandı.",
-        timestamp: new Date().toISOString(),
-      });
+    // Redis bağlantısını kontrol et
+    if (!redis) {
+      console.error("Redis bağlantısı kurulamadı.");
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Redis bağlantısı kurulamadı. Lütfen Redis yapılandırmasını kontrol edin.",
+        },
+        { status: 500 }
+      );
     }
 
-    return NextResponse.json({ error: "Geçersiz istek" }, { status: 400 });
+    // Verileri Sıfırla (Redis) butonu için sadece sıfırlama işlemi
+    if (reset) {
+      try {
+        await redis.del("all_duyurular");
+        return NextResponse.json({
+          success: true,
+          message: "Redis verileri başarıyla sıfırlandı.",
+          timestamp: new Date().toISOString(),
+        });
+      } catch (redisError) {
+        console.error("Redis sıfırlama hatası:", redisError);
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Redis sıfırlama işlemi sırasında bir hata oluştu.",
+            details: redisError instanceof Error ? redisError.message : "Bilinmeyen hata",
+          },
+          { status: 500 }
+        );
+      }
+    }
+
+    try {
+      if (!redis) {
+        console.error("Redis bağlantısı kurulamadı.");
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Redis bağlantısı kurulamadı. Lütfen Redis yapılandırmasını kontrol edin.",
+          },
+          { status: 500 }
+        );
+      }
+
+      // Redis'ten duyuru verilerini al
+      const duyurular = await redis.get("all_duyurular");
+
+      if (!duyurular) {
+        // Redis'te veri yoksa kullanıcıya bilgi mesajı döndür
+        return NextResponse.json(
+          {
+            success: true,
+            message: "Redis'te henüz duyuru bulunamadı. Lütfen 'Duyuruları Yenile' butonuna tıklayarak ilk kontrolü başlatın.",
+            toplam: 0,
+            important: "Duyuru listesi şu anda boş. Lütfen yukarıdaki 'Duyuruları Yenile ve Test Et' butonuna tıklayarak yeni verileri çekin.",
+          },
+          { status: 200 }
+        );
+      }
+
+      // Redis'ten dönen veriyi JSON.parse ile işleyin
+      let parsedDuyurular: any[];
+      try {
+        parsedDuyurular = typeof duyurular === "string" ? JSON.parse(duyurular) : [];
+      } catch (error) {
+        console.error("Redis'ten dönen duyurular JSON parse edilemedi:", error);
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Redis'ten dönen duyurular işlenemedi. Veri formatını kontrol edin.",
+          },
+          { status: 500 }
+        );
+      }
+
+      // Duyuruları döndür
+      return NextResponse.json(
+        {
+          success: true,
+          message: "Duyurular başarıyla alındı.",
+          toplam: parsedDuyurular.length,
+          data: parsedDuyurular,
+        },
+        { status: 200 }
+      );
+    } catch (error) {
+      console.error("Redis işlem hatası:", error);
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Redis işlemleri sırasında bir hata oluştu.",
+          details: error instanceof Error ? error.message : "Bilinmeyen hata",
+        },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Geçersiz istek. Lütfen doğru parametreleri gönderdiğinizden emin olun.",
+      },
+      { status: 400 }
+    );
   } catch (error) {
     console.error("Test/Sıfırlama hatası (POST):", error);
     // Hata durumunda bile her zaman JSON döndürerek JSON parse hatasını engelle
     return NextResponse.json(
       {
         success: false,
-        error: "Test veya Sıfırlama sırasında hata oluştu",
+        error: "Test veya Sıfırlama sırasında beklenmeyen bir hata oluştu.",
         details: error instanceof Error ? error.message : "Bilinmeyen hata",
       },
       { status: 500 }
