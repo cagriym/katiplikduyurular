@@ -342,7 +342,8 @@ export async function POST(request: NextRequest) {
             success: true,
             message: "Redis'te henüz duyuru bulunamadı. Lütfen 'Duyuruları Yenile' butonuna tıklayarak ilk kontrolü başlatın.",
             toplam: 0,
-            important: "Duyuru listesi şu anda boş. Lütfen yukarıdaki 'Duyuruları Yenile ve Test Et' butonuna tıklayarak yeni verileri çekin.",
+            important: "Duyuru listesi şu anda boş. Lütfen yukarıdaki \"Duyuruları Yenile ve Test Et\" butonuna tıklayarak yeni verileri çekin.",
+            duyuruListesi: "Duyuru Listesi (0 Kayıt)",
           },
           { status: 200 }
         );

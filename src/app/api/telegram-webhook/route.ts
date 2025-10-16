@@ -1,12 +1,29 @@
+// src/app/api/telegram-webhook/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import axios from "axios";
 import * as cheerio from "cheerio";
+import { Redis } from "@upstash/redis";
 
-// Telegram bot bilgileri
+// Telegram bot token
 const TG_TOKEN = process.env.TG_TOKEN;
-// TG_CHAT_ID webhook handler içinde gelen mesajdan alınacağı için burada kullanılmaz.
 
-// Ankara Adliyesi arşiv sayfası
+// Redis bağlantısı
+let redis: Redis | null = null;
+try {
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+  } else {
+    console.warn("Redis bilgileri eksik.");
+  }
+} catch (err) {
+  console.error("Redis bağlantısı hatası:", err);
+}
+
+// Ankara Adliyesi duyuruları URL
 const DUYURULAR_URL = "https://ankara.adalet.gov.tr/Arsiv/tumu";
 
 interface Duyuru {
@@ -16,266 +33,139 @@ interface Duyuru {
   id: string;
 }
 
-/**
- * Telegram'dan beklenen temel webhook yapısı
- * Bu arayüz sayesinde 'any' tipinden kaçınılır.
- */
 interface TelegramWebhookBody {
   message?: {
     text?: string;
-    chat?: {
-      id: number;
-      // Diğer chat özellikleri...
-    };
-    // Diğer message özellikleri...
-  };
-  // Diğer webhook gövde özellikleri...
-}
-
-/**
- * Telegram mesaj yapısının kesinlikle tanımlı olduğu hali.
- */
-interface DefinedTelegramMessage {
-  text: string;
-  chat: {
-    id: number;
+    chat?: { id: number };
   };
 }
 
-/**
- * Linkin tam bir URL olup olmadığını kontrol eder.
- * @param url Kontrol edilecek link
- */
+const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 const isAbsoluteUrl = (url: string) => /^(?:[a-z]+:)?\/\//i.test(url);
 
-/**
- * Belirtilen süre kadar bekler.
- */
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * Ankara Adliyesi arşiv sayfasından duyuruları çeker ve zaman aşımı durumunda yeniden dener.
- * Kritik: Bağlantı hatalarını (ETIMEDOUT) çözer.
- */
+// Web scraping ile duyuru çek
 async function fetchDuyurular(): Promise<Duyuru[]> {
-  // Seçiciyi daha esnek hale getirdik, ancak ana kapsayıcı hala "div.media"
   const selector = "div.media";
-  const MAX_RETRIES = 3; // Maksimum 3 deneme
   const baseUrl = "https://ankara.adalet.gov.tr";
+  const MAX_RETRIES = 3;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      console.log(
-        `[Telegram Scraper] Duyuru çekme denemesi: ${attempt}/${MAX_RETRIES}`
-      );
-
       const response = await axios.get(DUYURULAR_URL, {
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-          "Accept-Language": "tr-TR,tr;q=0.8,en-US;q.5,en;q.3",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "tr-TR,tr;q=0.8,en-US;q=0.5,en;q=0.3",
         },
-        timeout: 10000, // 10 saniye zaman aşımı
+        timeout: 15000,
       });
 
       const $ = cheerio.load(response.data);
       const duyurular: Duyuru[] = [];
 
-      $(selector).each((i, element) => {
-        // Başlık ve linki bulmak için daha esnek seçiciler kullanıldı (h4 a, a[href])
-        const titleElement = $(element)
-          .find(".media-body h4 a, .media-body a[href]")
-          .first();
+      $(selector).each((i, el) => {
+        const titleElement = $(el).find("h4 a, a[href]").first();
+        const dateElement = $(el).find(".date, p.date, small").first();
+
         const title = titleElement.text().trim();
         let link = titleElement.attr("href") || "";
+        const date = dateElement.text().trim() || "Tarih Yok";
 
-        // Tarih bilgisini bulmak için daha fazla varyasyon denendi (.date, p.date, small)
-        const dateElement = $(element)
-          .find(".media-body .date, .media-body p.date, .media-body small")
-          .first();
-        const date = dateElement.text().trim();
-
-        if (link && !isAbsoluteUrl(link)) {
-          link = baseUrl + link;
-        }
+        if (link && !isAbsoluteUrl(link)) link = baseUrl + link;
 
         if (title && link) {
-          const cleanTitle = title.replace(/\s\s+/g, " ").trim();
-
           duyurular.push({
-            title: cleanTitle,
-            link: link,
-            date: date || "Tarih Yok",
+            title,
+            link,
+            date,
             id: link.split("/").pop() || i.toString(),
           });
         }
       });
 
-      console.log(
-        `[Telegram Scraper] Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length} (Deneme: ${attempt})`
-      );
-
       if (duyurular.length === 0) {
-        // Duyuru çekme başarılı olduysa ama sonuç 0 ise, seçici veya web sitesi yapısı değişmiştir.
-        // Bu hata, kullanıcının gördüğü "Toplam: 0" durumunu açıklar.
-        throw new Error(
-          `Duyuru bulunamadı (Toplam 0). Web sitesi yapısı veya seçici "${selector}" değişmiş olabilir.`
-        );
+        throw new Error("Duyuru bulunamadı.");
       }
 
-      return duyurular; // Başarılı, döngüyü sonlandır.
-    } catch (error: unknown) {
-      if (attempt === MAX_RETRIES) {
-        // Tüm denemeler başarısız olduysa, hatayı yukarı fırlat.
-        console.error(
-          `[Telegram Scraper Hata] Tüm ${MAX_RETRIES} deneme başarısız oldu:`,
-          error
-        );
-        throw new Error(
-          `Duyuru çekme sırasında hata oluştu: ${
-            error instanceof Error ? error.message : "Bilinmeyen Hata"
-          }`
-        );
-      }
-
-      // Üstel geri çekilme ile bekleme (2s, 4s, 8s...)
-      const delayTime = Math.pow(2, attempt) * 1000;
-      console.log(
-        `[Telegram Scraper] Bağlantı hatası (${
-          error instanceof Error
-            ? error.message.split("\n")[0]
-            : "Bilinmeyen Hata"
-        }), ${delayTime / 1000} saniye sonra tekrar deneniyor...`
-      );
-      await delay(delayTime);
+      return duyurular;
+    } catch (err) {
+      if (attempt === MAX_RETRIES) throw err;
+      await delay(2000 * attempt); // 2s, 4s, 6s...
     }
   }
-  // Bu satıra ulaşılmamalıdır, ancak TypeScript için eklendi.
-  throw new Error("Duyuru çekme döngüsü tamamlanamadı.");
+  return [];
 }
 
-/**
- * Telegram'a yanıt gönder
- */
-async function sendTelegramReply(
-  chatId: string,
-  message: string
-): Promise<void> {
-  if (!TG_TOKEN) {
-    console.error("Telegram bot token eksik. Yanıt gönderilemedi.");
-    return;
-  }
-
-  const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
-
+// Telegram mesaj gönder
+async function sendTelegramReply(chatId: string, message: string) {
+  if (!TG_TOKEN) return;
   try {
-    await axios.post(url, {
+    await axios.post(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
       chat_id: chatId,
       text: message,
       parse_mode: "HTML",
     });
-  } catch (error) {
-    console.error("Telegram mesajı gönderme hatası:", error);
+    await delay(500); // Rate limit önleme
+  } catch (err) {
+    console.error("Telegram mesajı gönderilemedi:", err);
   }
 }
 
-/**
- * Duyuru listesini Telegram mesajı formatına dönüştürür.
- */
+// Duyuruları mesaj formatına çevir
 function formatDuyuruList(duyurular: Duyuru[]): string {
-  if (duyurular.length === 0) {
-    return "📋 Henüz duyuru bulunamadı. Lütfen daha sonra tekrar deneyin.";
-  }
+  if (duyurular.length === 0) return "📋 Henüz duyuru bulunamadı.";
 
-  let message = "📋 <b>Son 3 Duyuru</b>\n\n";
-
-  duyurular.slice(0, 3).forEach((duyuru, index) => {
-    message += `${index + 1}. <b>${duyuru.title}</b>\n`;
-    message += `   📅 ${duyuru.date}\n`;
-    message += `   🔗 <a href="${duyuru.link}">Duyuruyu Görüntüle</a>\n\n`;
+  let msg = "📋 <b>Son 3 Duyuru</b>\n\n";
+  duyurular.slice(0, 3).forEach((d, i) => {
+    msg += `${i + 1}. <b>${d.title}</b>\n📅 ${d.date}\n🔗 <a href="${d.link}">Duyuruyu Gör</a>\n\n`;
   });
-
-  message += "#AnkaraAdliye #Duyuru";
-  return message;
+  msg += "#AnkaraAdliye #Duyuru";
+  return msg;
 }
 
-/**
- * POST endpoint - Telegram webhook
- */
-export async function POST(request: NextRequest) {
+// POST endpoint
+export async function POST(req: NextRequest) {
   try {
-    const body: TelegramWebhookBody = await request.json();
+    const body: TelegramWebhookBody = await req.json();
+    if (!body.message?.text || !body.message.chat?.id) return NextResponse.json({ success: true });
 
-    // Telegram webhook mesajının gerekliliklerini kontrol et
-    if (!body.message || !body.message.text || !body.message.chat) {
-      // Beklenmeyen veya eksik yapıda mesaj varsa, başarılı sayılır ve devam edilir.
-      return NextResponse.json({ success: true });
+    const chatId = body.message.chat.id.toString();
+    const text = body.message.text.trim().toLowerCase();
+
+    let reply = "Bilinmeyen komut. /start veya /duyuru kullanabilirsiniz.";
+
+    if (text === "/start") {
+      reply = "👋 Merhaba! Son Ankara Adliyesi duyurularını görmek için /duyuru yazın.";
+    } else if (text === "/duyuru") {
+      let duyurular: Duyuru[] = [];
+
+      // Önce Redis kontrol et
+      if (redis) {
+        const cached = await redis.get("all_duyurular");
+        if (cached) {
+          try {
+            duyurular = JSON.parse(cached as string);
+          } catch {}
+        }
+      }
+
+      // Eğer Redis boşsa veya veri yoksa scraping
+      if (duyurular.length === 0) {
+        duyurular = await fetchDuyurular();
+        if (redis) {
+          await redis.set("all_duyurular", JSON.stringify(duyurular));
+          await redis.set("last_check_timestamp", new Date().toISOString());
+        }
+      }
+
+      reply = formatDuyuruList(duyurular);
     }
 
-    // Tip Daraltma (Type Narrowing):
-    // Kontrolü geçtikten sonra, message'ın kesinlikle tanımlı bir yapıda olduğunu biliyoruz.
-    // TypeScript'e bu kesinliği göstermek için tip dönüştürme (assertion) kullanıyoruz.
-    const message = body.message as DefinedTelegramMessage;
-
-    // Hatalı satırlar şimdi güvende:
-    const chatId = message.chat.id.toString(); // Hata 181: 'message.chat' is possibly 'undefined'. ÇÖZÜLDÜ.
-    const text = message.text; // Hata 188: 'text' is possibly 'undefined'. ÇÖZÜLDÜ.
-
-    console.log(`Telegram mesajı alındı: "${text}" - Chat ID: ${chatId}`);
-
-    // Komutu al (örneğin: "/duyuru")
-    const command = text.split(" ")[0].toLowerCase();
-    let replyMessage =
-      "Bilinmeyen komut. Lütfen <b>/start</b> yazarak menüye ulaşın veya <b>/duyuru</b> yazabilirsiniz.";
-
-    if (command === "/start") {
-      replyMessage =
-        "👋 Merhaba! Ankara Adliyesi duyurularını takip etmek için hazırım.\n\nSon duyuruları görmek için: <b>/duyuru</b>";
-    } else if (command === "/duyuru") {
-      // Duyuruları çek ve formatla
-      const duyurular = await fetchDuyurular();
-      replyMessage = formatDuyuruList(duyurular);
-    } else if (command === "/ayarlar") {
-      replyMessage =
-        "⚙️ <b>Ayarlar ve Bilgi Menüsü</b>\n\nBu bot, Ankara Adliyesi'nin duyurularını düzenli olarak kontrol eder ve bildirir.\n\n<b>Mevcut Durum:</b> Bot, cron job aracılığıyla düzenli olarak kontrol yapacak şekilde ayarlanmıştır. Manuel bildirim ayarı şu an için mevcut değildir.\n\n<b>Son Duyurular:</b> /duyuru";
-    } else {
-      // HATA AYIKLAMA: Botun yanıt vermediği durumlar için geri bildirim
-      console.warn(`Bilinmeyen veya desteklenmeyen komut: ${command}`);
-    }
-
-    await sendTelegramReply(chatId, replyMessage);
-
+    await sendTelegramReply(chatId, reply);
     return NextResponse.json({ success: true });
-  } catch (error: unknown) {
-    console.error("Telegram webhook işleme hatası (Üst Seviye):", error);
-
-    const errorMessage =
-      error instanceof Error ? error.message : "Bilinmeyen Hata";
-
-    // Hata durumunda bile Telegram'a bir yanıt göndererek kullanıcıyı bilgilendir.
-    const fallbackBody: TelegramWebhookBody = await request
-      .json()
-      .catch(() => ({}));
-
-    // Güvenli erişim sağlanmıştır: fallbackBody'nin varlığı kontrol edilir.
-    const fallbackChatId = fallbackBody.message?.chat?.id?.toString() || "";
-
-    if (fallbackChatId) {
-      sendTelegramReply(
-        fallbackChatId,
-        "❌ Üzgünüm, duyuruları çekerken bir sorun oluştu. Lütfen tekrar deneyin."
-      );
-    }
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Telegram webhook işleme hatası",
-        details: errorMessage,
-      },
-      { status: 500 }
-    );
+  } catch (err) {
+    console.error("Telegram webhook hatası:", err);
+    return NextResponse.json({ success: false, error: err instanceof Error ? err.message : "Bilinmeyen hata" }, { status: 500 });
   }
 }
