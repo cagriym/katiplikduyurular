@@ -3,13 +3,11 @@
 import React, { useState, useEffect, useCallback } from "react";
 
 // Varsayılan cn fonksiyonu (tailwind sınıflarını birleştirmek için)
-// Hata 6:25 çözümü: 'any' yerine daha kısıtlı bir tür kullanıldı.
 const cn = (...classes: (string | boolean | undefined)[]): string =>
   classes.filter(Boolean).join(" ");
 
 // -- Yardımcı Bileşenler (Card ve Button'ın minimalist tanımları) --
 
-// Hata 10:11 çözümü: Boş arayüz uyarısını gidermek için tek bir opsiyonel alan eklendi.
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   asChild?: boolean;
 }
@@ -55,7 +53,6 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
   </div>
 );
 
-// Hata 53:11 çözümü: Boş arayüz uyarısını gidermek için tek bir opsiyonel alan eklendi.
 interface CardContentProps extends React.HTMLAttributes<HTMLDivElement> {
   asChild?: boolean;
 }
@@ -69,7 +66,6 @@ export const CardContent: React.FC<CardContentProps> = ({
   </div>
 );
 
-// Hata 64:11 çözümü: Boş arayüz uyarısını gidermek için tek bir opsiyonel alan eklendi.
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   asChild?: boolean;
 }
@@ -121,9 +117,9 @@ export default function App() {
   const fetchDuyurular = useCallback(async () => {
     setError(null);
     try {
-      // Hata Düzeltme: Relative URL hatasını gidermek için absolute URL kullanıldı.
-      const apiPath = "/api/get-duyurular";
-      const url = `${window.location.origin}${apiPath}`;
+      // Düzeltme: Mutlak URL yerine, aynı kaynak için sadece göreceli yol kullanıldı.
+      // Bu, 'window.location.origin' kaynaklı potansiyel hataları önler.
+      const url = "/api/get-duyurular";
 
       const response = await fetch(url);
 
@@ -171,9 +167,8 @@ export default function App() {
     setStatus("Duyurular Yenileniyor, lütfen bekleyin...");
 
     try {
-      // Hata Düzeltme: Relative URL hatasını gidermek için absolute URL kullanıldı.
-      const apiPath = "/api/check-duyurular";
-      const url = `${window.location.origin}${apiPath}`;
+      // Düzeltme: Mutlak URL yerine, aynı kaynak için sadece göreceli yol kullanıldı.
+      const url = "/api/check-duyurular";
 
       const response = await fetch(url, {
         method: "POST",
@@ -212,6 +207,7 @@ export default function App() {
 
   // Verileri Sıfırla (Redis)
   const handleReset = async () => {
+    // Linter Hata Düzeltmesi: Tırnak işaretleri (\") yerine HTML varlığı (&quot;) kullanıldı.
     if (
       !window.confirm(
         "Dikkat: Bu işlem Redis'teki TÜM duyuruları silecektir. Devam etmek istiyor musunuz?"
@@ -225,9 +221,8 @@ export default function App() {
     setStatus("Redis verileri sıfırlanıyor...");
 
     try {
-      // Hata Düzeltme: Relative URL hatasını gidermek için absolute URL kullanıldı.
-      const apiPath = "/api/check-duyurular";
-      const url = `${window.location.origin}${apiPath}`;
+      // Düzeltme: Mutlak URL yerine, aynı kaynak için sadece göreceli yol kullanıldı.
+      const url = "/api/check-duyurular";
 
       const response = await fetch(url, {
         method: "POST",
@@ -428,8 +423,8 @@ export default function App() {
                 <div className="p-3 bg-yellow-100 border border-yellow-400 rounded-lg">
                   <p className="text-sm text-yellow-700">
                     **Önemli:** Duyuru listesi şu anda boş. Lütfen yukarıdaki
-                    "Duyuruları Yenile ve Test Et" butonuna tıklayarak yeni
-                    verileri çekin.
+                    &quot;Duyuruları Yenile ve Test Et&quot; butonuna tıklayarak
+                    yeni verileri çekin.
                   </p>
                 </div>
               )}
