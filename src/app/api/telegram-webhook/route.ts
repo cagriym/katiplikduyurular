@@ -33,21 +33,24 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "tr-TR,tr;q=0.8,en-US;q=0.5,en;q.3",
+        "Accept-Language": "tr-TR,tr;q=0.8,en-US;q.5,en;q.3",
       },
     });
     const $ = cheerio.load(response.data);
     const duyurular: Duyuru[] = [];
     const baseUrl = "https://ankara.adalet.gov.tr";
 
-    // Duyuru listesini çekme mantığı
-    $(".media-list li").each((i, element) => {
+    // GÜNCELLENMİŞ MANTIK: Duyuru listesini çekme
+    // .media-list li yerine daha genel bir seçici kullanıldı
+    $("div.col-md-9 div.media").each((i, element) => {
       const titleElement = $(element).find(".media-body h4 a");
       const title = titleElement.text().trim();
       let link = titleElement.attr("href") || "";
+
+      // Tarih çekme: .media-body içindeki .date sınıfı
       const date = $(element).find(".media-body .date").text().trim();
 
-      // MANTIK HATASI ÇÖZÜMÜ A: Link birleştirme kontrolü
+      // Link birleştirme kontrolü
       if (link && !isAbsoluteUrl(link)) {
         link = baseUrl + link;
       }
@@ -62,9 +65,13 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
       }
     });
 
+    // Debug amaçlı: Kaç duyuru bulunduğunu logla
+    console.log(
+      `Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length}`
+    );
+
     return duyurular;
   } catch (error: unknown) {
-    // HATA ÇÖZÜMÜ B: Hata yakalama düzeltildi
     console.error("Duyuru çekme hatası:", error);
     return [];
   }
@@ -78,7 +85,6 @@ async function sendTelegramReply(
   message: string
 ): Promise<void> {
   if (!TG_TOKEN) {
-    // DİKKAT: TG_TOKEN'ın Vercel'de eksik olması durumunda daha net bir hata logu.
     console.error(
       "HATA: TG_TOKEN ortam değişkeni eksik. Mesaj gönderilemedi. Lütfen Vercel ortam değişkenlerini kontrol edin."
     );
@@ -94,14 +100,14 @@ async function sendTelegramReply(
       parse_mode: "HTML", // HTML formatını desteklemesi için
     });
   } catch (error: unknown) {
-    // Mesaj gönderme başarısız olsa bile (örneğin bot engellendi), Webhook'a 200 dönmek için hatayı yakalayıp logluyoruz.
     const errorMessage = axios.isAxiosError(error)
       ? error.response?.data || error.message
       : error instanceof Error
       ? error.message
       : "Bilinmeyen Hata";
 
-    console.error("Telegram mesajı gönderme hatası:", errorMessage);
+    // Detaylı hata logu: Telegram mesajı gönderme hatası
+    console.error("Telegram mesajı gönderme hatası (API):", errorMessage);
   }
 }
 
@@ -110,13 +116,12 @@ async function sendTelegramReply(
  */
 function formatDuyuruList(duyurular: Duyuru[]): string {
   if (duyurular.length === 0) {
-    return "📋 <b>Henüz güncel duyuru bulunamadı.</b>";
+    return "📋 <b>Henüz güncel duyuru bulunamadı.</b> (Web sitesi yapısı değişmiş veya geçici bir hata olabilir.)"; // Hata durumunda daha açıklayıcı mesaj
   }
 
   let message = "📋 <b>Son 3 Duyuru</b>\n\n";
 
   duyurular.slice(0, 3).forEach((duyuru, index) => {
-    // Duyuru başlığındaki gereksiz boşlukları temizleyerek daha okunabilir hale getiriyoruz
     const cleanTitle = duyuru.title.replace(/\s\s+/g, " ").trim();
     message += `${index + 1}. <b>${cleanTitle}</b>\n`;
     message += `   📅 ${duyuru.date}\n`;
@@ -134,18 +139,20 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // Telegram webhook mesajını kontrol et
+    // Mesaj tipi kontrolü
     if (!body.message || !body.message.text || !body.message.chat) {
-      // Mesaj tipi (örneğin kanal postu) desteklenmiyorsa sessizce başarılı dön
       return NextResponse.json({ success: true });
     }
 
     const message = body.message;
     const chatId = message.chat.id.toString();
     const text = message.text.toLowerCase().trim();
-    const command = text.split(" ")[0].split("@")[0]; // Komutu ve bot adını ayır
+    // Komutların /start, /duyuru gibi kelime olarak kontrol edilmesi için
+    const command = text.split(" ")[0].split("@")[0];
 
-    console.log(`Telegram mesajı alındı: "${text}" - Chat ID: ${chatId}`);
+    console.log(
+      `Telegram mesajı alındı: "${text}" - Chat ID: ${chatId} - Komut: ${command}`
+    );
 
     let replyMessage =
       "Bilinmeyen komut. Duyuruları görmek için /duyuru yazabilirsiniz.";
@@ -157,23 +164,22 @@ export async function POST(request: NextRequest) {
       const duyurular = await fetchDuyurular();
       replyMessage = formatDuyuruList(duyurular);
     } else if (command === "/ayarlar") {
-      // Kullanıcının botun amacını anlaması için daha detaylı bilgi veriyoruz
       replyMessage =
         "⚙️ <b>Ayarlar ve Bilgi Menüsü</b>\n\nBu bot, Ankara Adliyesi'nin 'Zabıt Katipliği Sınavları' gibi belirli duyurularını düzenli olarak kontrol eder ve bildirir.\n\n<b>Mevcut Durum:</b> Bot, cron job aracılığıyla düzenli olarak kontrol yapacak şekilde ayarlanmıştır. Manuel bildirim ayarı şu an için mevcut değildir.\n\n<b>Son Duyurular:</b> /duyuru";
+    } else {
+      // HATA AYIKLAMA: Botun yanıt vermediği durumlar için geri bildirim
+      console.warn(`Bilinmeyen veya desteklenmeyen komut: ${command}`);
     }
 
     await sendTelegramReply(chatId, replyMessage);
 
-    // Telegram'a her zaman başarılı (200 OK) yanıtı dön
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    console.error("Telegram webhook işleme hatası:", error);
+    console.error("Telegram webhook işleme hatası (Üst Seviye):", error);
 
-    // Hata mesajını güvenli bir şekilde yakala
     const errorMessage =
       error instanceof Error ? error.message : "Bilinmeyen bir hata oluştu";
 
-    // Hata olsa bile Telegram'ın tekrar denemesini engellemek için başarılı (200) dönmek kritik
     return NextResponse.json(
       {
         success: false,
