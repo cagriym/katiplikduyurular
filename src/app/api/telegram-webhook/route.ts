@@ -17,11 +17,15 @@ interface Duyuru {
 }
 
 /**
+ * Linkin tam bir URL olup olmadığını kontrol eder.
+ * @param url Kontrol edilecek link
+ */
+const isAbsoluteUrl = (url: string) => /^(?:[a-z]+:)?\/\//i.test(url);
+
+/**
  * Ankara Adliyesi arşiv sayfasından duyuruları çek
  */
 async function fetchDuyurular(): Promise<Duyuru[]> {
-  // Bu fonksiyonun içeriği önceki versiyonlardan eksik, ancak sadece çağrıldığı varsayılıyor.
-  // Varsayılan olarak boş array dönsün. Gerçek mantık burada olmalıdır.
   try {
     const response = await axios.get(DUYURULAR_URL, {
       headers: {
@@ -34,18 +38,24 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
     });
     const $ = cheerio.load(response.data);
     const duyurular: Duyuru[] = [];
+    const baseUrl = "https://ankara.adalet.gov.tr";
 
-    // Duyuru listesini çekme mantığı (örnek)
+    // Duyuru listesini çekme mantığı
     $(".media-list li").each((i, element) => {
       const titleElement = $(element).find(".media-body h4 a");
       const title = titleElement.text().trim();
-      const link = titleElement.attr("href") || "";
+      let link = titleElement.attr("href") || "";
       const date = $(element).find(".media-body .date").text().trim();
+
+      // MANTIK HATASI ÇÖZÜMÜ A: Link birleştirme kontrolü
+      if (link && !isAbsoluteUrl(link)) {
+        link = baseUrl + link;
+      }
 
       if (title && link) {
         duyurular.push({
           title: title,
-          link: `https://ankara.adalet.gov.tr${link}`,
+          link: link, // Artık tam URL
           date: date || "Tarih Yok",
           id: link.split("/").pop() || i.toString(),
         });
@@ -53,7 +63,8 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
     });
 
     return duyurular;
-  } catch (error) {
+  } catch (error: unknown) {
+    // HATA ÇÖZÜMÜ B: Hata yakalama düzeltildi
     console.error("Duyuru çekme hatası:", error);
     return [];
   }
@@ -80,9 +91,7 @@ async function sendTelegramReply(
       parse_mode: "HTML", // HTML formatını desteklemesi için
     });
   } catch (error: unknown) {
-    // 'any' yerine 'unknown' kullanıldı
     // Mesaj gönderme başarısız olsa bile (örneğin bot engellendi), Webhook'a 200 dönmek için hatayı yakalayıp logluyoruz.
-    // Axios hatasını kontrol etmek için bir yardımcı fonksiyon veya tür daraltma kullanılır
     const errorMessage = axios.isAxiosError(error)
       ? error.response?.data || error.message
       : error instanceof Error
@@ -104,7 +113,9 @@ function formatDuyuruList(duyurular: Duyuru[]): string {
   let message = "📋 <b>Son 3 Duyuru</b>\n\n";
 
   duyurular.slice(0, 3).forEach((duyuru, index) => {
-    message += `${index + 1}. <b>${duyuru.title}</b>\n`;
+    // Duyuru başlığındaki gereksiz boşlukları temizleyerek daha okunabilir hale getiriyoruz
+    const cleanTitle = duyuru.title.replace(/\s\s+/g, " ").trim();
+    message += `${index + 1}. <b>${cleanTitle}</b>\n`;
     message += `   📅 ${duyuru.date}\n`;
     message += `   🔗 <a href="${duyuru.link}">Duyuruyu Görüntüle</a>\n\n`;
   });
@@ -143,9 +154,9 @@ export async function POST(request: NextRequest) {
       const duyurular = await fetchDuyurular();
       replyMessage = formatDuyuruList(duyurular);
     } else if (command === "/ayarlar") {
-      // <-- Yeni komut eklendi
+      // Kullanıcının botun amacını anlaması için daha detaylı bilgi veriyoruz
       replyMessage =
-        "⚙️ <b>Ayarlar Menüsü</b>\n\nBu bot, Ankara Adliyesi'nin en son duyurularını sizin için takip eder. Şu an için başka ayar seçeneği bulunmamaktadır. Gelecekte buradan bildirim sıklığınızı ayarlayabilirsiniz!";
+        "⚙️ <b>Ayarlar ve Bilgi Menüsü</b>\n\nBu bot, Ankara Adliyesi'nin 'Zabıt Katipliği Sınavları' gibi belirli duyurularını düzenli olarak kontrol eder ve bildirir.\n\n<b>Mevcut Durum:</b> Bot, cron job aracılığıyla düzenli olarak kontrol yapacak şekilde ayarlanmıştır. Manuel bildirim ayarı şu an için mevcut değildir.\n\n<b>Son Duyurular:</b> /duyuru";
     }
 
     await sendTelegramReply(chatId, replyMessage);
@@ -153,7 +164,6 @@ export async function POST(request: NextRequest) {
     // Telegram'a her zaman başarılı (200 OK) yanıtı dön
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    // 'any' yerine 'unknown' kullanıldı
     console.error("Telegram webhook işleme hatası:", error);
 
     // Hata mesajını güvenli bir şekilde yakala
