@@ -17,6 +17,32 @@ interface Duyuru {
 }
 
 /**
+ * Telegram'dan beklenen temel webhook yapısı
+ * Bu arayüz sayesinde 'any' tipinden kaçınılır.
+ */
+interface TelegramWebhookBody {
+  message?: {
+    text?: string;
+    chat?: {
+      id: number;
+      // Diğer chat özellikleri...
+    };
+    // Diğer message özellikleri...
+  };
+  // Diğer webhook gövde özellikleri...
+}
+
+/**
+ * Telegram mesaj yapısının kesinlikle tanımlı olduğu hali.
+ */
+interface DefinedTelegramMessage {
+  text: string;
+  chat: {
+    id: number;
+  };
+}
+
+/**
  * Linkin tam bir URL olup olmadığını kontrol eder.
  * @param url Kontrol edilecek link
  */
@@ -171,16 +197,22 @@ function formatDuyuruList(duyurular: Duyuru[]): string {
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body: TelegramWebhookBody = await request.json();
 
-    // Telegram webhook mesajını kontrol et
+    // Telegram webhook mesajının gerekliliklerini kontrol et
     if (!body.message || !body.message.text || !body.message.chat) {
+      // Beklenmeyen veya eksik yapıda mesaj varsa, başarılı sayılır ve devam edilir.
       return NextResponse.json({ success: true });
     }
 
-    const message = body.message;
-    const chatId = message.chat.id.toString();
-    const text = message.text;
+    // Tip Daraltma (Type Narrowing):
+    // Kontrolü geçtikten sonra, message'ın kesinlikle tanımlı bir yapıda olduğunu biliyoruz.
+    // TypeScript'e bu kesinliği göstermek için tip dönüştürme (assertion) kullanıyoruz.
+    const message = body.message as DefinedTelegramMessage;
+
+    // Hatalı satırlar şimdi güvende:
+    const chatId = message.chat.id.toString(); // Hata 181: 'message.chat' is possibly 'undefined'. ÇÖZÜLDÜ.
+    const text = message.text; // Hata 188: 'text' is possibly 'undefined'. ÇÖZÜLDÜ.
 
     console.log(`Telegram mesajı alındı: "${text}" - Chat ID: ${chatId}`);
 
@@ -213,9 +245,14 @@ export async function POST(request: NextRequest) {
     const errorMessage =
       error instanceof Error ? error.message : "Bilinmeyen Hata";
 
-    // Hata durumunda bile Telegram'a bir yanıt göndererek kullanıcıyı bilgilendir
-    const fallbackChatId =
-      (request.body as any)?.message?.chat?.id?.toString() || "";
+    // Hata durumunda bile Telegram'a bir yanıt göndererek kullanıcıyı bilgilendir.
+    const fallbackBody: TelegramWebhookBody = await request
+      .json()
+      .catch(() => ({}));
+
+    // Güvenli erişim sağlanmıştır: fallbackBody'nin varlığı kontrol edilir.
+    const fallbackChatId = fallbackBody.message?.chat?.id?.toString() || "";
+
     if (fallbackChatId) {
       sendTelegramReply(
         fallbackChatId,
