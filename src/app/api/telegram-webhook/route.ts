@@ -79,12 +79,17 @@ async function sendTelegramReply(
       text: message,
       parse_mode: "HTML", // HTML formatını desteklemesi için
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    // 'any' yerine 'unknown' kullanıldı
     // Mesaj gönderme başarısız olsa bile (örneğin bot engellendi), Webhook'a 200 dönmek için hatayı yakalayıp logluyoruz.
-    console.error(
-      "Telegram mesajı gönderme hatası:",
-      error.response ? error.response.data : error.message
-    );
+    // Axios hatasını kontrol etmek için bir yardımcı fonksiyon veya tür daraltma kullanılır
+    const errorMessage = axios.isAxiosError(error)
+      ? error.response?.data || error.message
+      : error instanceof Error
+      ? error.message
+      : "Bilinmeyen Hata";
+
+    console.error("Telegram mesajı gönderme hatası:", errorMessage);
   }
 }
 
@@ -147,14 +152,21 @@ export async function POST(request: NextRequest) {
 
     // Telegram'a her zaman başarılı (200 OK) yanıtı dön
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch (error: unknown) {
+    // 'any' yerine 'unknown' kullanıldı
     console.error("Telegram webhook işleme hatası:", error);
+
+    // Hata mesajını güvenli bir şekilde yakala
+    const errorMessage =
+      error instanceof Error ? error.message : "Bilinmeyen bir hata oluştu";
+
     // Hata olsa bile Telegram'ın tekrar denemesini engellemek için başarılı (200) dönmek kritik
     return NextResponse.json(
       {
         success: false,
         message:
           "İç sunucu hatası, ancak Telegram isteği başarılı kabul edildi.",
+        details: errorMessage,
       },
       { status: 200 }
     );
