@@ -24,8 +24,10 @@ const isAbsoluteUrl = (url: string) => /^(?:[a-z]+:)?\/\//i.test(url);
 
 /**
  * Ankara Adliyesi arşiv sayfasından duyuruları çek
+ * GÜNCELLEME: Seçici, en genel olan "div.media" olarak sadeleştirildi.
  */
 async function fetchDuyurular(): Promise<Duyuru[]> {
+  const selector = "div.media";
   try {
     const response = await axios.get(DUYURULAR_URL, {
       headers: {
@@ -40,9 +42,7 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
     const duyurular: Duyuru[] = [];
     const baseUrl = "https://ankara.adalet.gov.tr";
 
-    // GÜNCELLENMİŞ MANTIK: Duyuru listesini çekme
-    // Paylaştığınız HTML yapısına göre en genel ve doğru seçici olan "div.media" kullanıldı.
-    $("div.media").each((i, element) => {
+    $(selector).each((i, element) => {
       // titleElement, element'in (div.media) içindeki media-body'yi hedef alıyor
       const titleElement = $(element).find(".media-body h4 a");
       const title = titleElement.text().trim();
@@ -57,8 +57,10 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
       }
 
       if (title && link) {
+        const cleanTitle = title.replace(/\s\s+/g, " ").trim();
+
         duyurular.push({
-          title: title,
+          title: cleanTitle,
           link: link, // Artık tam URL
           date: date || "Tarih Yok",
           id: link.split("/").pop() || i.toString(),
@@ -68,12 +70,13 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
 
     // Debug amaçlı: Kaç duyuru bulunduğunu logla
     console.log(
-      `Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length}`
+      `[Scraper] Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length} (Seçici: ${selector})`
     );
 
     return duyurular;
   } catch (error: unknown) {
-    console.error("Duyuru çekme hatası:", error);
+    console.error("[Scraper Hata] Duyuru çekme hatası:", error);
+    // Hata durumunda boş liste dönülür
     return [];
   }
 }
@@ -118,7 +121,7 @@ async function sendTelegramReply(
 function formatDuyuruList(duyurular: Duyuru[]): string {
   if (duyurular.length === 0) {
     // Duyuru çekilemezse daha net bir hata mesajı
-    return "📋 <b>Henüz güncel duyuru bulunamadı.</b> (Web sitesi yapısı tekrar değişmiş olabilir, lütfen Vercel loglarını kontrol edin.)";
+    return "📋 <b>Henüz güncel duyuru bulunamadı.</b> (Web sitesi yapısı tekrar değişmiş olabilir.)";
   }
 
   let message = "📋 <b>Son 3 Duyuru</b>\n\n";

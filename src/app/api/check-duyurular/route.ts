@@ -16,7 +16,10 @@ try {
     });
     console.log("Redis bağlantısı kuruldu");
   } else {
-    console.log("Redis bilgileri eksik, veri saklama devre dışı");
+    // Redis ortam değişkenlerinin eksik olduğu uyarısı
+    console.warn(
+      "Redis bilgileri eksik, veri saklama devre dışı. Lütfen UPSTASH_REDIS_REST_URL ve TOKEN değişkenlerini kontrol edin."
+    );
   }
 } catch (error) {
   console.error("Redis bağlantı hatası:", error);
@@ -44,9 +47,9 @@ const isAbsoluteUrl = (url: string) => /^(?:[a-z]+:)?\/\//i.test(url);
 
 /**
  * Ankara Adliyesi arşiv sayfasından duyuruları çek
- * GÜNCELLEME: Doğru HTML yapısını hedeflemek için seçici güncellendi.
  */
 async function fetchDuyurular(): Promise<Duyuru[]> {
+  const selector = "div.media";
   try {
     const response = await axios.get(DUYURULAR_URL, {
       headers: {
@@ -61,22 +64,18 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
     const duyurular: Duyuru[] = [];
     const baseUrl = "https://ankara.adalet.gov.tr";
 
-    // En genel ve doğru seçici olan "div.media" kullanıldı.
-    $("div.media").each((i, element) => {
+    $(selector).each((i, element) => {
       const titleElement = $(element).find(".media-body h4 a");
       const title = titleElement.text().trim();
       let link = titleElement.attr("href") || "";
 
-      // Tarih çekme: .media-body içindeki .date sınıfı
       const date = $(element).find(".media-body .date").text().trim();
 
-      // Link birleştirme kontrolü
       if (link && !isAbsoluteUrl(link)) {
         link = baseUrl + link;
       }
 
       if (title && link) {
-        // Başlıkta olası birden fazla boşluğu tek boşluğa indir
         const cleanTitle = title.replace(/\s\s+/g, " ").trim();
 
         duyurular.push({
@@ -89,20 +88,18 @@ async function fetchDuyurular(): Promise<Duyuru[]> {
     });
 
     console.log(
-      `[Scraper] Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length}`
+      `[Scraper] Web sitesinden başarıyla çekilen duyuru sayısı: ${duyurular.length} (Seçici: ${selector})`
     );
 
     if (duyurular.length === 0) {
-      // Çekilen duyuru sayısı sıfırsa hata fırlat
       throw new Error(
-        "Duyuru çekme başarısız oldu veya web sitesi yapısı değişti (Toplam 0)."
+        `Duyuru çekme başarısız oldu (Toplam 0). Seçiciyi kontrol edin: ${selector}`
       );
     }
 
     return duyurular;
   } catch (error: unknown) {
     console.error("[Scraper Hata] Duyuru çekme hatası:", error);
-    // Hata durumunda boş liste dönmek yerine hata fırlatmak daha doğru
     throw new Error(
       `Duyuru çekme sırasında hata oluştu: ${
         error instanceof Error ? error.message : "Bilinmeyen Hata"
@@ -161,6 +158,7 @@ async function checkForNewDuyurular() {
 
   // 2. Redis'ten kaydedilmiş duyuruları çek
   const storedDuyurularRaw = await redis.get<Duyuru[] | null>("all_duyurular");
+  // HATA DÜZELTME: Duyurular yerine Duyuru[] kullanıldı
   const storedDuyurular: Duyuru[] = storedDuyurularRaw || [];
 
   // 3. Karşılaştırma için ID listesi oluştur
@@ -179,7 +177,8 @@ async function checkForNewDuyurular() {
   if (newDuyurular.length > 0) {
     console.log(`🚨 ${newDuyurular.length} yeni duyuru bulundu!`);
 
-    for (const duyuru of newDuyurular) {
+    // Yeni duyuruları Telegram'a gönder (İlk 3'ü gönderiyoruz)
+    for (const duyuru of newDuyurular.slice(0, 3)) {
       await sendTelegramMessage(formatNewDuyuruMessage(duyuru));
     }
 
@@ -192,7 +191,6 @@ async function checkForNewDuyurular() {
   }
 
   // Her zaman çekilen tüm duyuruları (güncellenen ya da güncellenmeyen) Redis'e kaydet
-  // Bu, ön yüzün her zaman en güncel listeyi göstermesini sağlar.
   if (currentDuyurular.length > 0) {
     await redis.set("all_duyurular", currentDuyurular.slice(0, 50));
     console.log(
@@ -207,11 +205,9 @@ async function checkForNewDuyurular() {
 export async function GET(request: NextRequest) {
   try {
     const authHeader = request.headers.get("Authorization");
-    const expectedAuth = `Bearer ${
-      process.env.CRON_SECRET || "default-secret"
-    }`;
+    const expectedAuth = process.env.CRON_SECRET || "default-secret";
 
-    if (authHeader !== expectedAuth) {
+    if (authHeader !== `Bearer ${expectedAuth}`) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -254,6 +250,7 @@ export async function POST(request: NextRequest) {
         console.log("Redis verisi sıfırlandı.");
       }
 
+      // Duyuruları kontrol et ve kaydet
       await checkForNewDuyurular();
 
       const storedDuyurularRaw = await redis?.get<Duyuru[] | null>(
@@ -266,8 +263,7 @@ export async function POST(request: NextRequest) {
         message: statusMessage,
         timestamp: new Date().toISOString(),
         total_duyuru: storedDuyurular.length,
-        // Bu kısım, ön yüzdeki 'Hata: Duyurular beklenmedik formatta geldi.' hatasını gidermek için eklendi.
-        // Artık çekilen toplam duyuru sayısı gösterilecek.
+        // Ön yüzdeki hatayı gidermek için: Eğer 0'dan büyükse başarılı kabul et.
         duyurular_success: storedDuyurular.length > 0,
       });
     }
@@ -276,7 +272,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Bilinmeyen hata";
-    console.error("Test hatası:", error);
+    console.error("Test hatası (Üst Seviye):", error);
     return NextResponse.json(
       {
         success: false,
