@@ -1,7 +1,16 @@
 {
   "functions": {
     "src/app/api/check-duyurular/route.ts": {
-      "maxDuration": 30
+      "maxDuration": 60
+    },
+    "src/app/api/cron-notification/route.ts": {
+      "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron-notification",
+      "schedule": "0 9,18 * * *"
+    }
+  ]
 }
