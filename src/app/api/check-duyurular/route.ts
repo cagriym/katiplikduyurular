@@ -24,11 +24,53 @@ export async function POST(request: Request) {
     const body = await request.json();
     const reset = body.reset === true;
     const forceRefresh = body.forceRefresh === true;
+    const latest = body.latest === true;
 
     if (reset) {
       await redis.del("all_duyurular");
       await redis.del("last_check_timestamp");
       return NextResponse.json({ success: true, message: "Redis verileri sıfırlandı." });
+    }
+
+    // Fetch the latest 3 announcements if 'latest' is true
+    if (latest) {
+      const cachedData = await redis.get("all_duyurular");
+      if (cachedData) {
+        let duyurular: Duyuru[];
+        if (typeof cachedData === "string") {
+          try {
+            const parsedData = JSON.parse(cachedData);
+            if (Array.isArray(parsedData)) {
+              duyurular = parsedData;
+            } else {
+              throw new Error("Cached data is not an array.");
+            }
+          } catch (parseError) {
+            console.error("Cache parsing error:", parseError);
+            throw new Error("Cache verisi geçersiz.");
+          }
+        } else {
+          throw new Error("Cache verisi beklenmeyen bir formatta.");
+        }
+
+        const latestDuyurular = duyurular.slice(0, 3).map((duyuru, index) => ({
+          index: index + 1,
+          title: duyuru.title,
+          date: duyuru.date,
+          link: duyuru.link,
+        }));
+
+        return NextResponse.json({
+          success: true,
+          message: "Son 3 duyuru başarıyla getirildi.",
+          latestDuyurular,
+        });
+      } else {
+        return NextResponse.json({
+          success: false,
+          message: "Cache'te duyuru bulunamadı.",
+        });
+      }
     }
 
     // Cache-first yaklaşım: Önce cache kontrol et
@@ -37,11 +79,21 @@ export async function POST(request: Request) {
       const lastCheck = await redis.get("last_check_timestamp");
       
       if (cachedData) {
-        let duyurular;
-        if (typeof cachedData === 'string') {
-          duyurular = JSON.parse(cachedData);
+        let duyurular: Duyuru[];
+        if (typeof cachedData === "string") {
+          try {
+            const parsedData = JSON.parse(cachedData);
+            if (Array.isArray(parsedData)) {
+              duyurular = parsedData;
+            } else {
+              throw new Error("Cached data is not an array.");
+            }
+          } catch (parseError) {
+            console.error("Cache parsing error:", parseError);
+            throw new Error("Cache verisi geçersiz.");
+          }
         } else {
-          duyurular = cachedData;
+          throw new Error("Cache verisi beklenmeyen bir formatta.");
         }
         
         return NextResponse.json({

@@ -38,7 +38,7 @@ export async function GET() {
 
     if (!redis) {
       statusMessage =
-        "Redis bağlantısı yok. Duyurular geçici olarak kullanılamıyor.";
+        "Redis bağlantısı yok. Lütfen Redis yapılandırmasını kontrol edin veya 'Duyuruları Yenile' butonuna tıklayın.";
       return NextResponse.json(
         { duyurular: [], statusMessage, total: 0, lastCheck: null },
         { status: 200 }
@@ -49,16 +49,12 @@ export async function GET() {
     lastCheck = (await redis.get("last_check_timestamp")) as string | null;
 
     if (storedDuyurular) {
-      if (typeof storedDuyurular === 'string') {
-        duyurular = JSON.parse(storedDuyurular);
-      } else {
-        duyurular = storedDuyurular as Duyuru[];
-      }
+      duyurular = JSON.parse(storedDuyurular as string);
     }
 
     if (duyurular.length === 0) {
       statusMessage =
-        "Redis'te henüz duyuru bulunamadı. Lütfen 'Duyuruları Yenile' butonuna tıklayarak ilk kontrolü başlatın.";
+        "Henüz duyuru bulunamadı. Lütfen 'Duyuruları Yenile' butonuna tıklayarak ilk kontrolü başlatın.";
     }
 
     return NextResponse.json(
