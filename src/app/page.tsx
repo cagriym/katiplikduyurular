@@ -366,13 +366,11 @@ export default function App() {
               <div className="flex justify-between items-center border-b pb-2">
                 <p className="font-semibold text-gray-700">Durum Mesajı:</p>
                 <p
-                  className={`font-medium ${
+                  className={`font-medium text-right flex-1 ml-4 ${
                     error ? "text-red-600" : "text-green-600"
                   }`}
                 >
-                  {error
-                    ? status
-                    : "Redis&apos;te henüz duyuru bulunamadı. Lütfen 'Duyuruları Yenile' butonuna tıklayarak ilk kontrolü başlatın."}
+                  {status}
                 </p>
               </div>
               <div className="flex justify-between items-center border-b pb-2">
