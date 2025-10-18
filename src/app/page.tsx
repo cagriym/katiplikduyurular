@@ -118,13 +118,29 @@ export default function App() {
     setError(null);
     try {
       const url = "/api/get-duyurular";
-      const response = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 saniye timeout
+
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`API Hatası: HTTP Durum Kodu ${response.status}`);
+        throw new Error(`API Hatası: HTTP ${response.status}`);
       }
 
-      const data: FetchResult = await response.json();
+      const text = await response.text();
+      if (!text || text.trim() === "") {
+        throw new Error("Sunucu boş yanıt döndü");
+      }
+
+      let data: FetchResult;
+      try {
+        data = JSON.parse(text);
+      } catch (parseError) {
+        console.error("JSON parse hatası:", text);
+        throw new Error(`Geçersiz JSON: ${text.substring(0, 100)}`);
+      }
+
       setDuyurular(data.duyurular);
       setLastCheck(data.lastCheck);
 
@@ -135,12 +151,18 @@ export default function App() {
       }
     } catch (err: unknown) {
       console.error("Veri çekme hatası:", err);
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : typeof err === "string"
-          ? err
-          : "Bilinmeyen Hata";
+      
+      let errorMessage = "Bilinmeyen Hata";
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          errorMessage = "İstek zaman aşımına uğradı";
+        } else {
+          errorMessage = err.message;
+        }
+      } else if (typeof err === "string") {
+        errorMessage = err;
+      }
+      
       setError(`Hata: Duyurular yüklenemedi. Detay: ${errorMessage}`);
       setStatus("Sonuç: HATA");
     }
