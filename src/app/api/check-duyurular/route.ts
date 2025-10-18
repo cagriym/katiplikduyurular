@@ -23,6 +23,7 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const reset = body.reset === true;
+    const forceRefresh = body.forceRefresh === true;
 
     if (reset) {
       await redis.del("all_duyurular");
@@ -30,16 +31,55 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, message: "Redis verileri sıfırlandı." });
     }
 
-    const duyurular = await fetchDuyurular();
+    // Cache-first yaklaşım: Önce cache kontrol et
+    if (!forceRefresh) {
+      const cachedData = await redis.get("all_duyurular");
+      const lastCheck = await redis.get("last_check_timestamp");
+      
+      if (cachedData) {
+        const duyurular = JSON.parse(cachedData as string);
+        return NextResponse.json({
+          success: true,
+          message: `Cache'ten ${duyurular.length} duyuru getirildi. (Son kontrol: ${lastCheck || 'Bilinmiyor'})`,
+          total: duyurular.length,
+          fromCache: true,
+          lastCheck: lastCheck || "Bilinmiyor",
+        });
+      }
+    }
 
-    await redis.set("all_duyurular", JSON.stringify(duyurular));
-    await redis.set("last_check_timestamp", new Date().toISOString());
+    // Cache yoksa veya forceRefresh=true ise scraping yap
+    try {
+      const duyurular = await fetchDuyurular();
 
-    return NextResponse.json({
-      success: true,
-      message: `${duyurular.length} duyuru başarıyla kaydedildi.`,
-      total: duyurular.length,
-    });
+      await redis.set("all_duyurular", JSON.stringify(duyurular));
+      await redis.set("last_check_timestamp", new Date().toISOString());
+
+      return NextResponse.json({
+        success: true,
+        message: `${duyurular.length} duyuru başarıyla kaydedildi.`,
+        total: duyurular.length,
+        fromCache: false,
+      });
+    } catch (scrapingError) {
+      // Scraping başarısız oldu, eski cache'i dön
+      const cachedData = await redis.get("all_duyurular");
+      const lastCheck = await redis.get("last_check_timestamp");
+      
+      if (cachedData) {
+        const duyurular = JSON.parse(cachedData as string);
+        return NextResponse.json({
+          success: true,
+          message: `Site erişilemedi. Cache'ten ${duyurular.length} duyuru getirildi. (Son başarılı kontrol: ${lastCheck || 'Bilinmiyor'})`,
+          total: duyurular.length,
+          fromCache: true,
+          lastCheck: lastCheck || "Bilinmiyor",
+          warning: "Site şu anda erişilemez durumda. VPN kullanın veya Vercel'e deploy edin.",
+        });
+      }
+      
+      throw scrapingError;
+    }
   } catch (error: unknown) {
     console.error("Duyuru kontrol hatası:", error);
     const errorMessage = error instanceof Error ? error.message : "Bilinmeyen Hata";
