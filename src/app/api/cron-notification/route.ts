@@ -111,7 +111,11 @@ export async function GET(request: NextRequest) {
     
     if (storedDuyurular) {
       try {
-        oldDuyurular = JSON.parse(storedDuyurular as string);
+        if (typeof storedDuyurular === 'string') {
+          oldDuyurular = JSON.parse(storedDuyurular);
+        } else {
+          oldDuyurular = storedDuyurular as Duyuru[];
+        }
       } catch {}
     }
 
