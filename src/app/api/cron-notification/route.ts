@@ -71,8 +71,31 @@ export async function GET(request: NextRequest) {
 
     console.log("Cron job çalışıyor - duyurular kontrol ediliyor...");
 
-    // Duyuruları çek
-    const duyurular = await fetchDuyurular();
+    // Önce Redis'ten mevcut duyuruları al
+    let duyurular;
+    try {
+      duyurular = await fetchDuyurular();
+      console.log(`${duyurular.length} duyuru başarıyla çekildi`);
+    } catch (scrapingError) {
+      // Scraping başarısız - cache'i kullan
+      console.warn('Scraping başarısız, cache kullanılıyor', scrapingError);
+      const cachedData = await redis.get("all_duyurular");
+      
+      if (cachedData) {
+        if (typeof cachedData === 'string') {
+          duyurular = JSON.parse(cachedData);
+        } else {
+          duyurular = cachedData;
+        }
+        console.log(`Cache'ten ${duyurular.length} duyuru alındı`);
+      } else {
+        console.log("Cache'te veri yok");
+        return NextResponse.json({
+          success: true,
+          message: "Site erişilemedi ve cache'te veri yok",
+        });
+      }
+    }
 
     if (duyurular.length === 0) {
       console.log("Duyuru bulunamadı");
