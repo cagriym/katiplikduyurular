@@ -49,7 +49,11 @@ export async function GET() {
     lastCheck = (await redis.get("last_check_timestamp")) as string | null;
 
     if (storedDuyurular) {
-      duyurular = JSON.parse(storedDuyurular as string);
+      if (typeof storedDuyurular === 'string') {
+        duyurular = JSON.parse(storedDuyurular);
+      } else {
+        duyurular = storedDuyurular as Duyuru[];
+      }
     }
 
     if (duyurular.length === 0) {
