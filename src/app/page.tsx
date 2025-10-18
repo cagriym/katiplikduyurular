@@ -254,31 +254,53 @@ export default function App() {
 
     try {
       const url = "/api/check-duyurular";
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reset: true }),
+        signal: controller.signal,
       });
 
-      const result = await response.json();
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const text = await response.text();
+      if (!text || text.trim() === "") {
+        throw new Error("Sunucu boş yanıt döndü");
+      }
+
+      const result = JSON.parse(text);
+      
       if (result.success) {
         setStatus(result.message);
         setDuyurular([]);
         setLastCheck(null);
       } else {
-        setError(`Hata: ${result.error}. Detay: ${result.details}`);
+        setError(`Hata: ${result.error || "Bilinmeyen hata"}`);
         setStatus("Sonuç: HATA");
       }
     } catch (err: unknown) {
       console.error("Sıfırlama API hatası:", err);
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : typeof err === "string"
-          ? err
-          : "Bilinmeyen Hata";
+      
+      let errorMessage = "Bilinmeyen Hata";
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          errorMessage = "İstek zaman aşımına uğradı";
+        } else {
+          errorMessage = err.message;
+        }
+      } else if (typeof err === "string") {
+        errorMessage = err;
+      }
+      
       setError(
-        `Hata: Sıfırlama işlemi sırasında sunucuya ulaşılamadı. Detay: ${errorMessage}`
+        `Hata: Sıfırlama işlemi başarısız. Detay: ${errorMessage}`
       );
       setStatus("Sonuç: HATA");
     } finally {
