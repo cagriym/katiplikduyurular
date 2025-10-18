@@ -159,18 +159,30 @@ export async function fetchDuyurularWithAxios(): Promise<Duyuru[]> {
 
 /**
  * Ana scraping fonksiyonu - önce Axios, başarısız olursa Puppeteer
+ * Timeout: 20 saniye (hard limit)
  */
 export async function fetchDuyurular(): Promise<Duyuru[]> {
+  // Hard timeout (20s)
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('Scraping timeout (20s)')), 20000);
+  });
+
   try {
     console.log('Axios ile duyuru çekme deneniyor...');
-    return await fetchDuyurularWithAxios();
+    return await Promise.race([
+      fetchDuyurularWithAxios(),
+      timeoutPromise
+    ]);
   } catch (axiosError) {
     console.warn('Axios başarısız, Puppeteer deneniyor...', axiosError);
     try {
-      return await fetchDuyurularWithPuppeteer();
+      return await Promise.race([
+        fetchDuyurularWithPuppeteer(),
+        timeoutPromise
+      ]);
     } catch (puppeteerError) {
       console.error('Puppeteer de başarısız:', puppeteerError);
-      throw new Error('Her iki scraping yöntemi de başarısız oldu.');
+      throw new Error('Site erişilemez durumda. Lütfen VPN/Proxy kullanın veya Vercel\'e deploy edin.');
     }
   }
 }
