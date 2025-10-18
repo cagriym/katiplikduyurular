@@ -137,6 +137,12 @@ Bot username: `@katiplik_duyurular_bot`
 
 ## 🐛 Troubleshooting
 
+### Problem: Frontend'de "Unexpected end of JSON input" hatası
+**Çözüm**: ✅ ÇÖZÜLDÜ
+- Timeout ve hata yakalama mekanizması eklendi
+- API yanıtları artık düzgün şekilde parse ediliyor
+- Cache-first sistem sayesinde her zaman veri mevcut
+
 ### Problem: Telegram bot cevap vermiyor
 **Çözüm**: Webhook'u kontrol edin
 ```bash
