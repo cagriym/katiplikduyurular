@@ -2,8 +2,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import axios from "axios";
-import * as cheerio from "cheerio";
 import { Redis } from "@upstash/redis";
+import { fetchDuyurular, type Duyuru } from "@/lib/scraper";
 
 // Telegram bot token
 const TG_TOKEN = process.env.TG_TOKEN;
@@ -23,16 +23,6 @@ try {
   console.error("Redis bağlantısı hatası:", err);
 }
 
-// Ankara Adliyesi duyuruları URL
-const DUYURULAR_URL = "https://ankara.adalet.gov.tr/Arsiv/tumu";
-
-interface Duyuru {
-  title: string;
-  link: string;
-  date: string;
-  id: string;
-}
-
 interface TelegramWebhookBody {
   message?: {
     text?: string;
@@ -41,67 +31,6 @@ interface TelegramWebhookBody {
 }
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
-const isAbsoluteUrl = (url: string) => /^(?:[a-z]+:)?\/\//i.test(url);
-
-// Web scraping ile duyuru çek
-async function fetchDuyurular(): Promise<Duyuru[]> {
-  const selector = "div.media";
-  const baseUrl = "https://ankara.adalet.gov.tr";
-  const MAX_RETRIES = 3;
-
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const response = await axios.get(DUYURULAR_URL, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-          "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-          "Accept-Encoding": "gzip, deflate, br",
-          "Connection": "keep-alive",
-          "Upgrade-Insecure-Requests": "1",
-          "Cache-Control": "max-age=0",
-        },
-        timeout: 30000,
-        maxRedirects: 5,
-        validateStatus: (status) => status < 500,
-      });
-
-      const $ = cheerio.load(response.data);
-      const duyurular: Duyuru[] = [];
-
-      $(selector).each((i, el) => {
-        const titleElement = $(el).find("h4 a, a[href]").first();
-        const dateElement = $(el).find(".date, p.date, small").first();
-
-        const title = titleElement.text().trim();
-        let link = titleElement.attr("href") || "";
-        const date = dateElement.text().trim() || "Tarih Yok";
-
-        if (link && !isAbsoluteUrl(link)) link = baseUrl + link;
-
-        if (title && link) {
-          duyurular.push({
-            title,
-            link,
-            date,
-            id: link.split("/").pop() || i.toString(),
-          });
-        }
-      });
-
-      if (duyurular.length === 0) {
-        throw new Error("Duyuru bulunamadı.");
-      }
-
-      return duyurular;
-    } catch (err) {
-      if (attempt === MAX_RETRIES) throw err;
-      await delay(2000 * attempt); // 2s, 4s, 6s...
-    }
-  }
-  return [];
-}
 
 // Telegram mesaj gönder
 async function sendTelegramReply(chatId: string, message: string) {
