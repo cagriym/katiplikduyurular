@@ -17,6 +17,10 @@ try {
   console.error("Redis bağlantı hatası:", error);
 }
 
+// Note: This function is designed to be triggered by a Vercel Cron Job.
+// Ensure your plan supports the required number of cron jobs and invocation frequency.
+// Hobby plan users should be aware of potential delays in execution (up to 59 minutes).
+
 export async function POST(request: Request) {
   try {
     if (!redis) throw new Error("Redis bağlantısı yok.");
