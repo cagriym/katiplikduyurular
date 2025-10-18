@@ -158,30 +158,58 @@ export default function App() {
 
     try {
       const url = "/api/check-duyurular";
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 saniye timeout
+
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ test: true, reset: false }),
+        signal: controller.signal,
       });
 
-      const result = await response.json();
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const text = await response.text();
+      if (!text || text.trim() === "") {
+        throw new Error("Sunucu boş yanıt döndü");
+      }
+
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch (parseError) {
+        console.error("JSON parse hatası:", text);
+        throw new Error(`Geçersiz JSON yanıtı: ${text.substring(0, 100)}`);
+      }
+
       if (result.success) {
         setStatus(result.message);
         await fetchDuyurular();
       } else {
-        setError(`Hata: ${result.error}. Detay: ${result.details}`);
+        setError(`Hata: ${result.error || "Bilinmeyen hata"}`);
         setStatus("Sonuç: HATA");
       }
     } catch (err: unknown) {
       console.error("Yenileme API hatası:", err);
-      const errorMessage =
-        err instanceof Error
-          ? err.message
-          : typeof err === "string"
-          ? err
-          : "Bilinmeyen Hata";
+      
+      let errorMessage = "Bilinmeyen Hata";
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          errorMessage = "İstek zaman aşımına uğradı (25s)";
+        } else {
+          errorMessage = err.message;
+        }
+      } else if (typeof err === "string") {
+        errorMessage = err;
+      }
+      
       setError(
-        `Hata: Yenileme işlemi sırasında sunucuya ulaşılamadı. Detay: ${errorMessage}`
+        `Hata: Yenileme işlemi başarısız. Detay: ${errorMessage}`
       );
       setStatus("Sonuç: HATA");
     } finally {
