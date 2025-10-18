@@ -37,7 +37,13 @@ export async function POST(request: Request) {
       const lastCheck = await redis.get("last_check_timestamp");
       
       if (cachedData) {
-        const duyurular = JSON.parse(cachedData as string);
+        let duyurular;
+        if (typeof cachedData === 'string') {
+          duyurular = JSON.parse(cachedData);
+        } else {
+          duyurular = cachedData;
+        }
+        
         return NextResponse.json({
           success: true,
           message: `Cache'ten ${duyurular.length} duyuru getirildi. (Son kontrol: ${lastCheck || 'Bilinmiyor'})`,
